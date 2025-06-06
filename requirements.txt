@@ -1,7 +1,7 @@
 pandas
 matplotlib
 numpy
-st-aggrid
+streamlit-aggrid
 lifelines
 openpyxl
 Pillow
