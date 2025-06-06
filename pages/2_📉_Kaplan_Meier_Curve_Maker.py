@@ -10,7 +10,7 @@ from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.statistics import logrank_test
 
 # Title and Instructions
-st.title("Kaplan-Meier Survival Curve Viewer")
+st.title("Novak's TriNetX Kaplan-Meier Survival Curve Viewer")
 st.markdown("Upload your Kaplan-Meier CSV output. Customize the visualization and download a publication-ready figure.")
 
 # Step 1: File Upload
