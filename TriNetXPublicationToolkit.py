@@ -6,15 +6,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Sidebar content
-st.sidebar.title("📖 Navigation")
-st.sidebar.markdown("""
-- 🌲 **Forest Plot Generator**
-- 📉 **Kaplan-Meier Viewer**
-- 📊 **Table Generator**
-- 📐 **Effect Size Calculator**
-""")
-
 # Main page content
 st.title("📚 TriNetX Publication Toolkit")
 st.markdown("""
