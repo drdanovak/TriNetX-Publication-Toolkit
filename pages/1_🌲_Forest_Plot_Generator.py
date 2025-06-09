@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import io
 
-# Use clean whitegrid style
 plt.style.use("seaborn-v0_8-whitegrid")
 
 st.set_page_config(layout="wide")
 st.title("🌲 Novak's TriNetX Forest Plot Generator")
 
-# Input method
-input_mode = st.radio("Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True)
+input_mode = st.radio(
+    "Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True
+)
 
 required_cols = ["Outcome", "Risk, Odds, or Hazard Ratio", "Lower CI", "Upper CI"]
 df = None
@@ -38,9 +39,51 @@ else:
     df = st.data_editor(default_data, num_rows="dynamic", use_container_width=True, key="manual_input_table")
 
 if df is not None:
+    # --- Add "Effect Size" column, calculate if missing ---
+    df = df.copy()
+    if "Effect Size" not in df.columns:
+        df["Effect Size"] = np.nan
+
+    for idx, row in df.iterrows():
+        value = row.get("Risk, Odds, or Hazard Ratio", None)
+        if isinstance(row["Outcome"], str) and row["Outcome"].startswith("##"):
+            df.at[idx, "Effect Size"] = np.nan
+        elif pd.notnull(value):
+            try:
+                df.at[idx, "Effect Size"] = np.log(float(value)) * (np.sqrt(3)/np.pi)
+            except Exception:
+                df.at[idx, "Effect Size"] = np.nan
+        else:
+            df.at[idx, "Effect Size"] = np.nan
+
+    # --- PLOT SETTINGS ---
     st.sidebar.header("⚙️ Basic Plot Settings")
+
+    # Select which measure to plot
+    x_measure = st.sidebar.radio(
+        "Plot on X-axis",
+        ("Effect Size (Cohen's d, approx.)", "Risk/Odds/Hazard Ratio"),
+        index=0
+    )
+
+    if x_measure == "Effect Size (Cohen's d, approx.)":
+        plot_column = "Effect Size"
+        lci_column = "Lower CI"
+        uci_column = "Upper CI"
+        x_axis_label = "Effect Size (Cohen's d, approx.)"
+        ref_line = 0
+        ref_label = "0"
+        axis_log = False
+    else:
+        plot_column = "Risk, Odds, or Hazard Ratio"
+        lci_column = "Lower CI"
+        uci_column = "Upper CI"
+        x_axis_label = "Risk/Odds/Hazard Ratio"
+        ref_line = 1
+        ref_label = "1"
+        axis_log = True  # Usually you want to plot ratios on log scale
+
     plot_title = st.sidebar.text_input("Plot Title", value="Forest Plot")
-    x_axis_label = st.sidebar.text_input("X-axis Label", value="Effect Size (RR / OR / HR)")
     show_grid = st.sidebar.checkbox("Show Grid", value=True)
     show_values = st.sidebar.checkbox("Show Numerical Annotations", value=False)
     use_groups = st.sidebar.checkbox("Treat rows starting with '##' as section headers", value=True)
@@ -51,12 +94,10 @@ if df is not None:
         line_width = st.slider("CI Line Width", 1, 4, 2)
         font_size = st.slider("Font Size", 10, 20, 12)
         label_offset = st.slider("Label Horizontal Offset", 0.01, 0.3, 0.05)
-        use_log = st.checkbox("Use Log Scale for X-axis", value=False)
+        use_log = st.checkbox("Use Log Scale for X-axis", value=axis_log)
         axis_padding = st.slider("X-axis Padding (%)", 2, 40, 10)
         y_axis_padding = st.slider("Y-axis Padding (Rows)", 0.0, 5.0, 1.0, step=0.5)
-        # Adjustable tick height
         cap_height = st.slider("Tick Height (for CI ends)", 0.05, 0.5, 0.18, step=0.01)
-
         if color_scheme == "Color":
             ci_color = st.color_picker("CI Color", "#1f77b4")
             marker_color = st.color_picker("Point Color", "#d62728")
@@ -87,8 +128,8 @@ if df is not None:
         fig, ax = plt.subplots(figsize=(10, len(y_labels) * 0.7))
         valid_rows = [i for i in range(len(rows)) if rows[i] is not None]
 
-        # Axis limits with padding
-        ci_vals = pd.concat([df["Lower CI"].dropna(), df["Upper CI"].dropna()])
+        # Axis limits (from CIs, skip headers)
+        ci_vals = pd.concat([df[lci_column].dropna(), df[uci_column].dropna()])
         x_min, x_max = ci_vals.min(), ci_vals.max()
         x_pad = (x_max - x_min) * (axis_padding / 100)
         ax.set_xlim(x_min - x_pad, x_max + x_pad)
@@ -97,25 +138,26 @@ if df is not None:
         for i, row in enumerate(rows):
             if row is None:
                 continue
-            effect = row["Effect Size"]
-            lci = row["Lower CI"]
-            uci = row["Upper CI"]
+            effect = row.get(plot_column, np.nan)
+            lci = row.get(lci_column, np.nan)
+            uci = row.get(uci_column, np.nan)
             if pd.notnull(effect) and pd.notnull(lci) and pd.notnull(uci):
-                # Draw CI line
+                # CI line
                 ax.hlines(i, xmin=lci, xmax=uci, color=ci_color, linewidth=line_width, capstyle='round')
-                # Draw tick marks (caps) at both ends
+                # Tick marks at both ends
                 ax.vlines([lci, uci], [i - cap_height, i - cap_height], [i + cap_height, i + cap_height], color=ci_color, linewidth=line_width)
-                # Draw effect size marker
+                # Marker for point estimate
                 ax.plot(effect, i, 'o', color=marker_color, markersize=point_size)
-                # Show values if needed
+                # Show value label
                 if show_values:
                     label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
                     ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
 
-        # Reference line at 1
-        ax.axvline(x=1, color='gray', linestyle='--', linewidth=1)
+        # Reference line
+        ax.axvline(x=ref_line, color='gray', linestyle='--', linewidth=1)
+        # ax.text(ref_line, len(y_labels), ref_label, color='gray', va='bottom', ha='center', fontsize=font_size-2)
 
-        # Custom tick labels with styling
+        # Y axis labels
         ax.set_yticks(range(len(y_labels)))
         for tick_label, style in zip(ax.set_yticklabels(y_labels), text_styles):
             if style == "bold":
@@ -123,27 +165,23 @@ if df is not None:
             tick_label.set_fontsize(font_size)
 
         if use_log:
-            ax.set_xscale('log')
+            try:
+                ax.set_xscale('log')
+            except Exception:
+                st.warning("Log scale is only valid for positive numbers.")
         if show_grid:
             ax.grid(True, axis='x', linestyle=':', linewidth=0.6)
         else:
             ax.grid(False)
 
-        # Y-axis padding
         ax.set_ylim(len(y_labels) - 1 + y_axis_padding, -1 - y_axis_padding)
-
-        # Labels
         ax.set_xlabel(x_axis_label, fontsize=font_size)
         ax.set_title(plot_title, fontsize=font_size + 2, weight='bold')
         fig.tight_layout()
-
-        # Display plot
         st.pyplot(fig)
 
-        # Download
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=300)
         st.download_button("📥 Download Plot as PNG", data=buf.getvalue(), file_name="forest_plot.png", mime="image/png")
-
 else:
     st.info("Please upload a file or enter data manually to generate a plot.")
