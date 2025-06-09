@@ -12,7 +12,7 @@ st.title("🌲 Novak's TriNetX Forest Plot Generator")
 # Input method
 input_mode = st.radio("Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True)
 
-required_cols = ["Outcome", "Effect Size", "Lower CI", "Upper CI"]
+required_cols = ["Outcome", "Risk, Odds, or Hazard Ratio", "Lower CI", "Upper CI"]
 df = None
 
 if input_mode == "📤 Upload file":
