@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import io
 
 plt.style.use("seaborn-v0_8-whitegrid")
-
 st.set_page_config(layout="wide")
 st.title("🌲 Novak's TriNetX Forest Plot Generator")
 
@@ -13,8 +12,24 @@ input_mode = st.radio(
     "Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True
 )
 
-required_cols = ["Outcome", "Risk, Odds, or Hazard Ratio", "Lower CI", "Upper CI"]
+required_cols = [
+    "Outcome",
+    "Risk, Odds, or Hazard Ratio",
+    "Lower CI",
+    "Upper CI",
+    "Effect Size (Cohen's d, approx.)"
+]
 df = None
+
+def compute_cohens_d(rr):
+    # Cohen's d from RR/OR/HR, safe for None
+    try:
+        if pd.isnull(rr):
+            return np.nan
+        val = float(rr)
+        return np.log(val) * (np.sqrt(3) / np.pi)
+    except Exception:
+        return np.nan
 
 if input_mode == "📤 Upload file":
     uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
@@ -24,9 +39,15 @@ if input_mode == "📤 Upload file":
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
-            if not all(col in df.columns for col in required_cols):
-                st.error(f"Your file must include the following columns: {required_cols}")
-                df = None
+            # Add Effect Size column if missing
+            if "Effect Size (Cohen's d, approx.)" not in df.columns:
+                df["Effect Size (Cohen's d, approx.)"] = df["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
+            # Ensure all required columns are present
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = np.nan
+            # Ensure column order
+            df = df[required_cols]
         except Exception as e:
             st.error(f"Error reading file: {e}")
 else:
@@ -36,52 +57,42 @@ else:
         "Lower CI": [None, 1.2, 1.0, None, 0.7, 1.0],
         "Upper CI": [None, 1.8, 1.5, None, 1.0, 1.4],
     })
-    df = st.data_editor(default_data, num_rows="dynamic", use_container_width=True, key="manual_input_table")
+    # Always (re)compute Cohen's d on render
+    default_data["Effect Size (Cohen's d, approx.)"] = default_data["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
+    # Session-state for manual table and clear button
+    if "manual_table" not in st.session_state:
+        st.session_state.manual_table = default_data.copy()
+    col1, col2 = st.columns([2, 1])
+    with col2:
+        if st.button("🧹 Clear Table"):
+            # Remove all but headers
+            st.session_state.manual_table = pd.DataFrame({col: [None]*6 for col in required_cols})
+    # Recompute Effect Size (even after edits)
+    manual_df = st.session_state.manual_table.copy()
+    manual_df["Effect Size (Cohen's d, approx.)"] = manual_df["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
+    st.session_state.manual_table = st.data_editor(
+        manual_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="manual_input_table",
+        column_config={
+            "Effect Size (Cohen's d, approx.)": st.column_config.NumberColumn(
+                "Effect Size (Cohen's d, approx.)",
+                disabled=True,
+                help="Auto-calculated as ln(RR/OR/HR) × sqrt(3)/π",
+            )
+        }
+    )
+    df = st.session_state.manual_table
 
 if df is not None:
-    # --- Add "Effect Size" column, calculate if missing ---
-    df = df.copy()
-    if "Effect Size" not in df.columns:
-        df["Effect Size"] = np.nan
-
-    for idx, row in df.iterrows():
-        value = row.get("Risk, Odds, or Hazard Ratio", None)
-        if isinstance(row["Outcome"], str) and row["Outcome"].startswith("##"):
-            df.at[idx, "Effect Size"] = np.nan
-        elif pd.notnull(value):
-            try:
-                df.at[idx, "Effect Size"] = np.log(float(value)) * (np.sqrt(3)/np.pi)
-            except Exception:
-                df.at[idx, "Effect Size"] = np.nan
-        else:
-            df.at[idx, "Effect Size"] = np.nan
-
-    # --- PLOT SETTINGS ---
     st.sidebar.header("⚙️ Basic Plot Settings")
 
-    # Select which measure to plot
     x_measure = st.sidebar.radio(
         "Plot on X-axis",
-        ("Effect Size (Cohen's d, approx.)", "Risk/Odds/Hazard Ratio"),
+        ("Effect Size (Cohen's d, approx.)", "Risk, Odds, or Hazard Ratio"),
         index=0
     )
-
-    if x_measure == "Effect Size (Cohen's d, approx.)":
-        plot_column = "Effect Size"
-        lci_column = "Lower CI"
-        uci_column = "Upper CI"
-        x_axis_label = "Effect Size (Cohen's d, approx.)"
-        ref_line = 0
-        ref_label = "0"
-        axis_log = False
-    else:
-        plot_column = "Risk, Odds, or Hazard Ratio"
-        lci_column = "Lower CI"
-        uci_column = "Upper CI"
-        x_axis_label = "Risk/Odds/Hazard Ratio"
-        ref_line = 1
-        ref_label = "1"
-        axis_log = True  # Usually you want to plot ratios on log scale
 
     plot_title = st.sidebar.text_input("Plot Title", value="Forest Plot")
     show_grid = st.sidebar.checkbox("Show Grid", value=True)
@@ -94,7 +105,7 @@ if df is not None:
         line_width = st.slider("CI Line Width", 1, 4, 2)
         font_size = st.slider("Font Size", 10, 20, 12)
         label_offset = st.slider("Label Horizontal Offset", 0.01, 0.3, 0.05)
-        use_log = st.checkbox("Use Log Scale for X-axis", value=axis_log)
+        use_log = st.checkbox("Use Log Scale for X-axis", value=(x_measure != "Effect Size (Cohen's d, approx.)"))
         axis_padding = st.slider("X-axis Padding (%)", 2, 40, 10)
         y_axis_padding = st.slider("Y-axis Padding (Rows)", 0.0, 5.0, 1.0, step=0.5)
         cap_height = st.slider("Tick Height (for CI ends)", 0.05, 0.5, 0.18, step=0.01)
@@ -104,6 +115,13 @@ if df is not None:
         else:
             ci_color = "black"
             marker_color = "black"
+
+    # Axis and plot variables based on toggle
+    plot_column = x_measure
+    lci_column = "Lower CI"
+    uci_column = "Upper CI"
+    x_axis_label = x_measure
+    ref_line = 0 if x_measure == "Effect Size (Cohen's d, approx.)" else 1
 
     if st.button("📊 Generate Forest Plot"):
         rows = []
@@ -127,7 +145,6 @@ if df is not None:
 
         fig, ax = plt.subplots(figsize=(10, len(y_labels) * 0.7))
         valid_rows = [i for i in range(len(rows)) if rows[i] is not None]
-
         # Axis limits (from CIs, skip headers)
         ci_vals = pd.concat([df[lci_column].dropna(), df[uci_column].dropna()])
         x_min, x_max = ci_vals.min(), ci_vals.max()
@@ -142,22 +159,16 @@ if df is not None:
             lci = row.get(lci_column, np.nan)
             uci = row.get(uci_column, np.nan)
             if pd.notnull(effect) and pd.notnull(lci) and pd.notnull(uci):
-                # CI line
                 ax.hlines(i, xmin=lci, xmax=uci, color=ci_color, linewidth=line_width, capstyle='round')
-                # Tick marks at both ends
                 ax.vlines([lci, uci], [i - cap_height, i - cap_height], [i + cap_height, i + cap_height], color=ci_color, linewidth=line_width)
-                # Marker for point estimate
                 ax.plot(effect, i, 'o', color=marker_color, markersize=point_size)
-                # Show value label
                 if show_values:
                     label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
                     ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
 
         # Reference line
         ax.axvline(x=ref_line, color='gray', linestyle='--', linewidth=1)
-        # ax.text(ref_line, len(y_labels), ref_label, color='gray', va='bottom', ha='center', fontsize=font_size-2)
 
-        # Y axis labels
         ax.set_yticks(range(len(y_labels)))
         for tick_label, style in zip(ax.set_yticklabels(y_labels), text_styles):
             if style == "bold":
