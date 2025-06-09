@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import io
 
+# Use clean whitegrid style
 plt.style.use("seaborn-v0_8-whitegrid")
+
 st.set_page_config(layout="wide")
 st.title("🌲 Novak's TriNetX Forest Plot Generator")
 
-# ----- Input mode -----
-input_mode = st.radio(
-    "Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True
-)
+# Input method
+input_mode = st.radio("Select data input method:", ["📤 Upload file", "✍️ Manual entry"], index=1, horizontal=True)
 
-required_cols = ["Outcome", "RR/OR/HR", "Lower CI", "Upper CI", "Effect Size"]
+required_cols = ["Outcome", "Effect Size", "Lower CI", "Upper CI"]
 df = None
 
 if input_mode == "📤 Upload file":
@@ -24,64 +23,19 @@ if input_mode == "📤 Upload file":
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
-            # If not all columns, try to infer Effect Size
-            if "Effect Size" not in df.columns and "RR/OR/HR" in df.columns:
-                df["Effect Size"] = np.log(df["RR/OR/HR"]) * (np.sqrt(3)/np.pi)
             if not all(col in df.columns for col in required_cols):
                 st.error(f"Your file must include the following columns: {required_cols}")
                 df = None
         except Exception as e:
             st.error(f"Error reading file: {e}")
-
 else:
-    # Default data
     default_data = pd.DataFrame({
         "Outcome": ["## Cardiovascular", "Hypertension", "Stroke", "## Metabolic", "Diabetes", "Obesity"],
-        "RR/OR/HR": [None, 1.5, 1.2, None, 0.85, 1.2],
+        "Effect Size": [None, 1.5, 1.2, None, 0.85, 1.2],
         "Lower CI": [None, 1.2, 1.0, None, 0.7, 1.0],
         "Upper CI": [None, 1.8, 1.5, None, 1.0, 1.4],
-        "Effect Size": [None, None, None, None, None, None],
     })
-
-    # Table state management
-    if "manual_table" not in st.session_state:
-        st.session_state.manual_table = default_data.copy()
-
-    col1, col2 = st.columns([2, 1])
-    with col2:
-        if st.button("🧹 Clear Table"):
-            # Reset table to empty (keep headers)
-            st.session_state.manual_table = pd.DataFrame({col: [None]*6 for col in default_data.columns})
-
-    # Calculate Effect Size for non-header rows
-    manual_df = st.session_state.manual_table.copy()
-    for idx, row in manual_df.iterrows():
-        rr = row["RR/OR/HR"]
-        # Only fill Effect Size for valid numbers and non-header rows
-        if isinstance(row["Outcome"], str) and row["Outcome"].startswith("##"):
-            manual_df.at[idx, "Effect Size"] = None
-        elif pd.notnull(rr):
-            try:
-                manual_df.at[idx, "Effect Size"] = np.log(float(rr)) * (np.sqrt(3) / np.pi)
-            except Exception:
-                manual_df.at[idx, "Effect Size"] = None
-        else:
-            manual_df.at[idx, "Effect Size"] = None
-
-    st.session_state.manual_table = st.data_editor(
-        manual_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="manual_input_table",
-        column_config={
-            "Effect Size": st.column_config.NumberColumn(
-                "Effect Size (Cohen's d, approx.)",
-                disabled=True,
-                help="Calculated as ln(RR/OR/HR) × sqrt(3)/π",
-            )
-        }
-    )
-    df = st.session_state.manual_table
+    df = st.data_editor(default_data, num_rows="dynamic", use_container_width=True, key="manual_input_table")
 
 if df is not None:
     st.sidebar.header("⚙️ Basic Plot Settings")
@@ -100,6 +54,7 @@ if df is not None:
         use_log = st.checkbox("Use Log Scale for X-axis", value=False)
         axis_padding = st.slider("X-axis Padding (%)", 2, 40, 10)
         y_axis_padding = st.slider("Y-axis Padding (Rows)", 0.0, 5.0, 1.0, step=0.5)
+        # Adjustable tick height
         cap_height = st.slider("Tick Height (for CI ends)", 0.05, 0.5, 0.18, step=0.01)
 
         if color_scheme == "Color":
@@ -132,7 +87,7 @@ if df is not None:
         fig, ax = plt.subplots(figsize=(10, len(y_labels) * 0.7))
         valid_rows = [i for i in range(len(rows)) if rows[i] is not None]
 
-        # Axis limits with padding (using lower/upper CI, skipping headers)
+        # Axis limits with padding
         ci_vals = pd.concat([df["Lower CI"].dropna(), df["Upper CI"].dropna()])
         x_min, x_max = ci_vals.min(), ci_vals.max()
         x_pad = (x_max - x_min) * (axis_padding / 100)
@@ -157,8 +112,8 @@ if df is not None:
                     label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
                     ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
 
-        # Reference line at 0 for Cohen's d
-        ax.axvline(x=0, color='gray', linestyle='--', linewidth=1)
+        # Reference line at 1
+        ax.axvline(x=1, color='gray', linestyle='--', linewidth=1)
 
         # Custom tick labels with styling
         ax.set_yticks(range(len(y_labels)))
@@ -174,12 +129,18 @@ if df is not None:
         else:
             ax.grid(False)
 
+        # Y-axis padding
         ax.set_ylim(len(y_labels) - 1 + y_axis_padding, -1 - y_axis_padding)
+
+        # Labels
         ax.set_xlabel(x_axis_label, fontsize=font_size)
         ax.set_title(plot_title, fontsize=font_size + 2, weight='bold')
         fig.tight_layout()
+
+        # Display plot
         st.pyplot(fig)
 
+        # Download
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=300)
         st.download_button("📥 Download Plot as PNG", data=buf.getvalue(), file_name="forest_plot.png", mime="image/png")
