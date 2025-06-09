@@ -15,14 +15,13 @@ input_mode = st.radio(
 required_cols = [
     "Outcome",
     "Risk, Odds, or Hazard Ratio",
+    "Effect Size (Cohen's d, approx.)",
     "Lower CI",
-    "Upper CI",
-    "Effect Size (Cohen's d, approx.)"
+    "Upper CI"
 ]
 df = None
 
 def compute_cohens_d(rr):
-    # Cohen's d from RR/OR/HR, safe for None
     try:
         if pd.isnull(rr):
             return np.nan
@@ -39,14 +38,14 @@ if input_mode == "📤 Upload file":
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
-            # Add Effect Size column if missing
+            # Add Effect Size column if missing, after RR/OR/HR
             if "Effect Size (Cohen's d, approx.)" not in df.columns:
-                df["Effect Size (Cohen's d, approx.)"] = df["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
-            # Ensure all required columns are present
+                idx = df.columns.get_loc("Risk, Odds, or Hazard Ratio") + 1
+                df.insert(idx, "Effect Size (Cohen's d, approx.)", df["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d))
+            # Ensure all required columns are present and in order
             for col in required_cols:
                 if col not in df.columns:
                     df[col] = np.nan
-            # Ensure column order
             df = df[required_cols]
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -57,19 +56,24 @@ else:
         "Lower CI": [None, 1.2, 1.0, None, 0.7, 1.0],
         "Upper CI": [None, 1.8, 1.5, None, 1.0, 1.4],
     })
-    # Always (re)compute Cohen's d on render
+    # Compute Cohen's d and reorder columns
     default_data["Effect Size (Cohen's d, approx.)"] = default_data["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
-    # Session-state for manual table and clear button
+    default_data = default_data[[
+        "Outcome",
+        "Risk, Odds, or Hazard Ratio",
+        "Effect Size (Cohen's d, approx.)",
+        "Lower CI",
+        "Upper CI"
+    ]]
     if "manual_table" not in st.session_state:
         st.session_state.manual_table = default_data.copy()
     col1, col2 = st.columns([2, 1])
     with col2:
         if st.button("🧹 Clear Table"):
-            # Remove all but headers
             st.session_state.manual_table = pd.DataFrame({col: [None]*6 for col in required_cols})
-    # Recompute Effect Size (even after edits)
     manual_df = st.session_state.manual_table.copy()
     manual_df["Effect Size (Cohen's d, approx.)"] = manual_df["Risk, Odds, or Hazard Ratio"].apply(compute_cohens_d)
+    manual_df = manual_df[required_cols]
     st.session_state.manual_table = st.data_editor(
         manual_df,
         num_rows="dynamic",
@@ -145,7 +149,6 @@ if df is not None:
 
         fig, ax = plt.subplots(figsize=(10, len(y_labels) * 0.7))
         valid_rows = [i for i in range(len(rows)) if rows[i] is not None]
-        # Axis limits (from CIs, skip headers)
         ci_vals = pd.concat([df[lci_column].dropna(), df[uci_column].dropna()])
         x_min, x_max = ci_vals.min(), ci_vals.max()
         x_pad = (x_max - x_min) * (axis_padding / 100)
@@ -158,15 +161,15 @@ if df is not None:
             effect = row.get(plot_column, np.nan)
             lci = row.get(lci_column, np.nan)
             uci = row.get(uci_column, np.nan)
+            # Draw line, ticks, and ALWAYS plot central marker if data valid
             if pd.notnull(effect) and pd.notnull(lci) and pd.notnull(uci):
                 ax.hlines(i, xmin=lci, xmax=uci, color=ci_color, linewidth=line_width, capstyle='round')
                 ax.vlines([lci, uci], [i - cap_height, i - cap_height], [i + cap_height, i + cap_height], color=ci_color, linewidth=line_width)
-                ax.plot(effect, i, 'o', color=marker_color, markersize=point_size)
+                ax.plot(effect, i, 'o', color=marker_color, markersize=point_size, zorder=3)
                 if show_values:
                     label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
                     ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
 
-        # Reference line
         ax.axvline(x=ref_line, color='gray', linestyle='--', linewidth=1)
 
         ax.set_yticks(range(len(y_labels)))
