@@ -31,7 +31,7 @@ if input_mode == "📤 Upload file":
 else:
     default_data = pd.DataFrame({
         "Outcome": ["## Cardiovascular", "Hypertension", "Stroke", "## Metabolic", "Diabetes", "Obesity"],
-        "Effect Size": [None, 1.5, 1.2, None, 0.85, 1.2],
+        "Risk, Odds, or Hazard Ratio": [None, 1.5, 1.2, None, 0.85, 1.2],
         "Lower CI": [None, 1.2, 1.0, None, 0.7, 1.0],
         "Upper CI": [None, 1.8, 1.5, None, 1.0, 1.4],
     })
