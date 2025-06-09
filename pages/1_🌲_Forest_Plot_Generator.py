@@ -131,4 +131,90 @@ if df is not None:
     else:
         plot_column = "Risk, Odds, or Hazard Ratio"
         ci_l = df["Lower CI"]
-        ci_u = df["Upp]()_
+        ci_u = df["Upper CI"]
+        ci_vals = pd.concat([ci_l.dropna(), ci_u.dropna(), df[plot_column].dropna()])
+        ref_line = 1
+
+    x_axis_label = plot_column
+
+    if st.button("📊 Generate Forest Plot"):
+        rows = []
+        y_labels = []
+        text_styles = []
+        indent = "\u00A0" * 4
+        group_mode = False
+
+        for i, row in df.iterrows():
+            if use_groups and isinstance(row["Outcome"], str) and row["Outcome"].startswith("##"):
+                header = row["Outcome"][3:].strip()
+                y_labels.append(header)
+                text_styles.append("bold")
+                rows.append(None)
+                group_mode = True
+            else:
+                display_name = f"{indent}{row['Outcome']}" if group_mode else row["Outcome"]
+                y_labels.append(display_name)
+                text_styles.append("normal")
+                rows.append(row)
+
+        fig, ax = plt.subplots(figsize=(10, len(y_labels) * 0.7))
+        valid_rows = [i for i in range(len(rows)) if rows[i] is not None]
+
+        # Use the correct scale for axis limits!
+        x_min, x_max = ci_vals.min(), ci_vals.max()
+        x_pad = (x_max - x_min) * (axis_padding / 100)
+        ax.set_xlim(x_min - x_pad, x_max + x_pad)
+
+        # Always plot marker and lines on correct scale
+        for i, row in enumerate(rows):
+            if row is None:
+                continue
+
+            if x_measure == "Effect Size (Cohen's d, approx.)":
+                effect = row.get("Effect Size (Cohen's d, approx.)", np.nan)
+                lci = compute_cohens_d(row.get("Lower CI", np.nan))
+                uci = compute_cohens_d(row.get("Upper CI", np.nan))
+            else:
+                effect = row.get("Risk, Odds, or Hazard Ratio", np.nan)
+                lci = row.get("Lower CI", np.nan)
+                uci = row.get("Upper CI", np.nan)
+
+            if pd.notnull(lci) and pd.notnull(uci):
+                ax.hlines(i, xmin=lci, xmax=uci, color=ci_color, linewidth=line_width, capstyle='round')
+                ax.vlines([lci, uci], [i - cap_height, i - cap_height], [i + cap_height, i + cap_height], color=ci_color, linewidth=line_width)
+
+            if pd.notnull(effect):
+                ax.plot(effect, i, 'o', color=marker_color, markersize=point_size, zorder=3)
+                if show_values and pd.notnull(lci) and pd.notnull(uci):
+                    label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
+                    ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
+
+        ax.axvline(x=ref_line, color='gray', linestyle='--', linewidth=1)
+
+        ax.set_yticks(range(len(y_labels)))
+        for tick_label, style in zip(ax.set_yticklabels(y_labels), text_styles):
+            if style == "bold":
+                tick_label.set_fontweight("bold")
+            tick_label.set_fontsize(font_size)
+
+        if use_log:
+            try:
+                ax.set_xscale('log')
+            except Exception:
+                st.warning("Log scale is only valid for positive numbers.")
+        if show_grid:
+            ax.grid(True, axis='x', linestyle=':', linewidth=0.6)
+        else:
+            ax.grid(False)
+
+        ax.set_ylim(len(y_labels) - 1 + y_axis_padding, -1 - y_axis_padding)
+        ax.set_xlabel(x_axis_label, fontsize=font_size)
+        ax.set_title(plot_title, fontsize=font_size + 2, weight='bold')
+        fig.tight_layout()
+        st.pyplot(fig)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=300)
+        st.download_button("📥 Download Plot as PNG", data=buf.getvalue(), file_name="forest_plot.png", mime="image/png")
+else:
+    st.info("Please upload a file or enter data manually to generate a plot.")
