@@ -154,19 +154,29 @@ if df is not None:
         x_pad = (x_max - x_min) * (axis_padding / 100)
         ax.set_xlim(x_min - x_pad, x_max + x_pad)
 
-        # Plot
+        # === Robust plotting: Always plot the marker if available, CIs if available ===
         for i, row in enumerate(rows):
             if row is None:
                 continue
-            effect = row.get(plot_column, np.nan)
-            lci = row.get(lci_column, np.nan)
-            uci = row.get(uci_column, np.nan)
-            # Draw line, ticks, and ALWAYS plot central marker if data valid
-            if pd.notnull(effect) and pd.notnull(lci) and pd.notnull(uci):
+
+            # CIs
+            lci = row.get("Lower CI", np.nan)
+            uci = row.get("Upper CI", np.nan)
+            # X value
+            if x_measure == "Effect Size (Cohen's d, approx.)":
+                effect = row.get("Effect Size (Cohen's d, approx.)", np.nan)
+            else:
+                effect = row.get("Risk, Odds, or Hazard Ratio", np.nan)
+
+            # Plot CI line and ticks if CIs are present
+            if pd.notnull(lci) and pd.notnull(uci):
                 ax.hlines(i, xmin=lci, xmax=uci, color=ci_color, linewidth=line_width, capstyle='round')
                 ax.vlines([lci, uci], [i - cap_height, i - cap_height], [i + cap_height, i + cap_height], color=ci_color, linewidth=line_width)
+
+            # Plot central marker if effect is present (even if CIs are missing)
+            if pd.notnull(effect):
                 ax.plot(effect, i, 'o', color=marker_color, markersize=point_size, zorder=3)
-                if show_values:
+                if show_values and pd.notnull(lci) and pd.notnull(uci):
                     label = f"{effect:.2f} [{lci:.2f}, {uci:.2f}]"
                     ax.text(uci + label_offset, i, label, va='center', fontsize=font_size - 2)
 
