@@ -25,3 +25,4 @@ xlsxwriter>=3.1.2
 # Streamlit enhancements
 streamlit-aggrid>=0.3.4.post3
 streamlit-option-menu>=0.3.6
+lifelines
