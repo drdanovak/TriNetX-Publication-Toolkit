@@ -1,0 +1,9 @@
+# .streamlit/config.toml
+[theme]
+base = "light"
+
+[server]
+headless = true
+
+[client]
+showSidebarNavigation = true
