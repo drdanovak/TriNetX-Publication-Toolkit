@@ -6,10 +6,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Main page content
 st.title("📚 TriNetX Publication Toolkit")
 st.markdown("""
-Welcome to the **TriNetX Publication Toolkit**, a collection of easy-to-use tools designed to streamline your research publication workflow.
+Welcome to the **TriNetX Publication Toolkit**, a collection of easy-to-use tools organized into:
+- 📏 **Calculators**
+- 📊 **Graphing Tools**
+- 📋 **Table Generators**
 
-Navigate using the sidebar.
+Use the sidebar to explore each tool.
 """)
