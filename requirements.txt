@@ -1,8 +1,27 @@
-streamlit
-pandas
-matplotlib
-numpy
-streamlit-aggrid
-lifelines
-openpyxl
-Pillow
+# Core Streamlit version with multipage support
+streamlit>=1.25.0
+
+# Data handling
+pandas>=1.5.0
+numpy>=1.22.0
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.15.0
+seaborn>=0.12.2
+
+# Statistical calculations
+scipy>=1.10.0
+statsmodels>=0.14.0
+
+# Table formatting / HTML rendering
+beautifulsoup4>=4.12.0
+jinja2>=3.1.2
+
+# File I/O (Excel, CSV, etc.)
+openpyxl>=3.1.0
+xlsxwriter>=3.1.2
+
+# Streamlit enhancements
+streamlit-aggrid>=0.3.4.post3
+streamlit-option-menu>=0.3.6
