@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
@@ -49,6 +50,16 @@ default_columns = [
     "After: p-Value", "After: Standardized Mean Difference"
 ]
 available_columns = list(df_raw.columns)
+# Recalculate filtered_columns after updating available_columns
+filtered_columns = [col for col in [
+    "Characteristic Name", "Characteristic ID", "Category",
+    "Cohort 1 Before: Patient Count", "Cohort 1 Before: % of Cohort", "Cohort 1 Before: Mean", "Cohort 1 Before: SD",
+    "Cohort 2 Before: Patient Count", "Cohort 2 Before: % of Cohort", "Cohort 2 Before: Mean", "Cohort 2 Before: SD",
+    "Before: p-Value", "Before: Standardized Mean Difference",
+    "Cohort 1 After: Patient Count", "Cohort 1 After: % of Cohort", "Cohort 1 After: Mean", "Cohort 1 After: SD",
+    "Cohort 2 After: Patient Count", "Cohort 2 After: % of Cohort", "Cohort 2 After: Mean", "Cohort 2 After: SD",
+    "After: p-Value", "After: Standardized Mean Difference"
+] if col in available_columns]
 filtered_columns = [col for col in default_columns if col in available_columns]
 df_trimmed = df_raw[filtered_columns].copy()
 
