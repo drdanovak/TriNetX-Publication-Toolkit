@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
@@ -58,7 +57,8 @@ with st.sidebar.expander("📋 Column Selection and Renaming", expanded=False):
     rename_dict = {col: st.text_input(f"Rename '{col}'", col, key=f"rename_{col}") for col in selected_columns}
 df_trimmed = df_raw[selected_columns].copy()
 df_trimmed.rename(columns=rename_dict, inplace=True)
-df_trimmed.fillna("", inplace=True)
+for col in df_trimmed.select_dtypes(include=["object"]).columns:
+    df_trimmed[col].fillna("", inplace=True)
 
 with st.sidebar.expander("🧩 Group Rows Settings", expanded=False):
     preset_groups = ["Demographics", "Conditions", "Lab Values", "Medications"]
