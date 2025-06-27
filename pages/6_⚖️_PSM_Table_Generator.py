@@ -12,11 +12,8 @@ uploaded_file = st.file_uploader("📂 Upload your TriNetX CSV file and turn it 
 if not uploaded_file:
     st.stop()
 
-# Read the uploaded file content
 content = uploaded_file.read().decode("utf-8")
 lines = content.splitlines()
-
-# Try to detect the header row based on the presence of known column names
 known_headers = ["Characteristic Name", "Characteristic ID", "Category"]
 detected_header_row = None
 
@@ -42,7 +39,6 @@ with st.sidebar.expander("### ✍️ Table Operations", expanded=False):
     reset_table = st.sidebar.button("🔄 Reset Table to Default")
 
 with st.sidebar.expander("🛠️ Table Formatting Settings", expanded=False):
-    st.markdown("### 🔧 Adjust Visual Presentation")
     font_size = st.slider("Font Size", 6, 18, 10)
     h_align = st.selectbox("Text Horizontal Alignment", ["left", "center", "right"])
     v_align = st.selectbox("Text Vertical Alignment", ["top", "middle", "bottom"])
@@ -117,5 +113,89 @@ if merge_duplicates:
                 prev = val
         df_trimmed[merge_col] = new_col
 
-st.markdown("### ✅ Preview of Cleaned Table")
-st.dataframe(df_trimmed)
+if add_column_grouping:
+    try:
+        col_names = list(df_trimmed.columns)
+        before_cols = [col for col in col_names if 'Before' in col and 'After' not in col]
+        after_cols = [col for col in col_names if 'After' in col]
+        first_cols = [col for col in col_names if col not in before_cols + after_cols]
+        new_order = first_cols + before_cols + after_cols
+        grouped_labels = ([''] * len(first_cols) +
+                          ['Before Propensity Score Matching'] * len(before_cols) +
+                          ['After Propensity Score Matching'] * len(after_cols))
+        multi_index = pd.MultiIndex.from_arrays([grouped_labels, new_order])
+        df_trimmed = df_trimmed[new_order]
+        df_trimmed.columns = multi_index
+    except Exception as e:
+        st.error(f"Error applying column grouping headers: {e}")
+
+def get_journal_css(journal_style, font_size, h_align, v_align):
+    return f"""
+    <style>
+    table {{
+        border-collapse: collapse;
+        width: 100%;
+        font-family: Arial, sans-serif;
+        font-size: {font_size}pt;
+    }}
+    th, td {{
+        border: 1px solid black;
+        padding: 6px;
+        text-align: {h_align};
+        vertical-align: {v_align};
+    }}
+    th {{
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }}
+    .group-row td {{
+        background-color: #e6e6e6;
+        font-weight: bold;
+        text-align: left;
+    }}
+    </style>
+    """
+
+def generate_html_table(df, journal_style, font_size, h_align, v_align):
+    try:
+        css = get_journal_css(journal_style, font_size, h_align, v_align)
+        html = css + "<table>"
+        if add_column_grouping and isinstance(df.columns, pd.MultiIndex):
+            group_levels = df.columns.get_level_values(0)
+            col_spans = []
+            last = None
+            span = 0
+            for grp in group_levels:
+                if grp == last:
+                    span += 1
+                else:
+                    if last is not None:
+                        col_spans.append((last, span))
+                    last = grp
+                    span = 1
+            col_spans.append((last, span))
+            group_row = "<tr>" + "".join([f"<th colspan='{span}'>{grp}</th>" for grp, span in col_spans]) + "</tr>"
+            subheader_row = "<tr>" + "".join([f"<th>{sub}</th>" for sub in df.columns.get_level_values(1)]) + "</tr>"
+            html += group_row + subheader_row
+        else:
+            html += "<tr>" + "".join([f"<th>{col}</th>" for col in df.columns]) + "</tr>"
+        for _, row in df.iterrows():
+            col_key = ('', 'Characteristic Name') if isinstance(df.columns, pd.MultiIndex) else 'Characteristic Name'
+            char_name = str(row.get(col_key, '')).strip().lower()
+            if char_name in [label.strip().lower() for label in selected_groups]:
+                html += f"<tr class='group-row'><td colspan='{len(df.columns)}'>{row.get(col_key, '')}</td></tr>"
+            else:
+                if isinstance(df.columns, pd.MultiIndex):
+                    cells = [f"<td>{row[col]}</td>" for col in df.columns]
+                else:
+                    cells = [f"<td>{cell}</td>" for cell in row.values]
+                html += "<tr>" + "".join(cells) + "</tr>"
+        html += "</table>"
+        return html
+    except Exception as e:
+        st.error(f"Error generating HTML table: {e}")
+        return ""
+
+html_table = generate_html_table(df_trimmed, journal_style, font_size, h_align, v_align)
+st.markdown("### 🧾 Formatted Table Preview")
+st.markdown(html_table, unsafe_allow_html=True)
