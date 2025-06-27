@@ -207,47 +207,6 @@ def get_journal_css(journal_style, font_size, h_align, v_align):
     </style>
     """
 
-
-def generate_html_table(df, journal_style, font_size, h_align, v_align):
-    try:
-        css = get_journal_css(journal_style, font_size, h_align, v_align)
-        html = css + "<table>"
-        if add_column_grouping and isinstance(df.columns, pd.MultiIndex):
-            group_levels = df.columns.get_level_values(0)
-            col_spans = []
-            last = None
-            span = 0
-            for grp in group_levels:
-                if grp == last:
-                    span += 1
-                else:
-                    if last is not None:
-                        col_spans.append((last, span))
-                    last = grp
-                    span = 1
-            col_spans.append((last, span))
-            group_row = "<tr>" + "".join([f"<th colspan='{span}'>{grp}</th>" for grp, span in col_spans]) + "</tr>"
-            subheader_row = "<tr>" + "".join([f"<th>{sub}</th>" for sub in df.columns.get_level_values(1)]) + "</tr>"
-            html += group_row + subheader_row
-        else:
-            html += "<tr>" + "".join([f"<th>{col}</th>" for col in df.columns]) + "</tr>"
-        for _, row in df.iterrows():
-            col_key = ('', 'Characteristic Name') if isinstance(df.columns, pd.MultiIndex) else 'Characteristic Name'
-            char_name = str(row.get(col_key, '')).strip().lower()
-            if char_name in [label.strip().lower() for label in selected_groups]:
-                html += f"<tr class='group-row'><td colspan='{len(df.columns)}'>{row.get(col_key, '')}</td></tr>"
-            else:
-                if isinstance(df.columns, pd.MultiIndex):
-                    cells = [f"<td>{row[col]}</td>" for col in df.columns]
-                else:
-                    cells = [f"<td>{cell}</td>" for cell in row.values]
-                html += "<tr>" + "".join(cells) + "</tr>"
-        html += "</table>"
-        return html
-    except Exception as e:
-        st.error(f"Error generating HTML table: {e}")
-        return ""
-
 html_table = generate_html_table(df_trimmed, journal_style, font_size, h_align, v_align)
 
 st.markdown("### 🧾 Formatted Table Preview")
