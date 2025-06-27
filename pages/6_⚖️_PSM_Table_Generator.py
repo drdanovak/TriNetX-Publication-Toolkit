@@ -130,6 +130,55 @@ if add_column_grouping:
     except Exception as e:
         st.error(f"Error applying column grouping headers: {e}")
 
+if edit_toggle:
+    st.markdown("🔓 **Drag-and-Drop Enabled:** Click and drag the '⇅ Drag to Reorder' column in the table below to rearrange rows. You can disable editing in the sidebar to lock the table.")
+    st.subheader("📋 Editable Table")
+    aggrid_df = df_trimmed.copy()
+    if isinstance(aggrid_df.columns, pd.MultiIndex):
+        aggrid_df.columns = [col[1] for col in aggrid_df.columns]
+    aggrid_df.insert(0, "Drag", "⇅")
+    gb = GridOptionsBuilder.from_dataframe(aggrid_df)
+    gb.configure_default_column(editable=True, resizable=True)
+    gb.configure_column("Drag", header_name="⇅ Drag to Reorder", rowDrag=True, pinned="left", editable=False, width=250)
+    gb.configure_grid_options(rowDragManaged=True)
+    group_row_style = JsCode("""
+    function(params) {
+        if (params.data && ['Demographics', 'Conditions', 'Lab Values', 'Medications'].includes(params.data['Characteristic Name'] && params.data['Characteristic Name'].toString().trim())) {
+            return {
+                'fontWeight': 'bold',
+                'backgroundColor': '#e6e6e6',
+                'textAlign': 'left'
+            }
+        }
+    }
+    """)
+    gb.configure_grid_options(getRowStyle=group_row_style)
+    grid_response = AgGrid(aggrid_df, gridOptions=gb.build(), update_mode=GridUpdateMode.MODEL_CHANGED, fit_columns_on_grid_load=True, allow_unsafe_jscode=True, height=500, reload_data=False)
+    updated_df = pd.DataFrame(grid_response["data"]).drop(columns=["Drag"], errors="ignore")
+    if "Characteristic Name" in updated_df.columns:
+        st.session_state["row_order"] = list(updated_df["Characteristic Name"])
+    df_trimmed["_row_order"] = df_trimmed[name_col].apply(lambda x: st.session_state["row_order"].index(x) if x in st.session_state["row_order"] else float("inf"))
+    df_trimmed.sort_values("_row_order", inplace=True)
+    df_trimmed.drop(columns=["_row_order"], inplace=True)
+    df_trimmed.reset_index(drop=True, inplace=True)
+    st.session_state["refresh_preview"] = st.button("🔄 Update Preview Table Now")
+    if add_column_grouping:
+        try:
+            col_names = list(updated_df.columns)
+            before_cols = [col for col in col_names if 'Before' in col and 'After' not in col]
+            after_cols = [col for col in col_names if 'After' in col]
+            first_cols = [col for col in col_names if col not in before_cols + after_cols]
+            new_order = first_cols + before_cols + after_cols
+            grouped_labels = ([''] * len(first_cols) +
+                              ['Before Propensity Score Matching'] * len(before_cols) +
+                              ['After Propensity Score Matching'] * len(after_cols))
+            updated_df = updated_df[new_order]
+            updated_df.columns = pd.MultiIndex.from_arrays([grouped_labels, new_order])
+        except Exception as e:
+            st.error(f"Error restoring column groups after edit: {e}")
+    df_trimmed = updated_df
+
+
 def get_journal_css(journal_style, font_size, h_align, v_align):
     return f"""
     <style>
@@ -156,6 +205,8 @@ def get_journal_css(journal_style, font_size, h_align, v_align):
     }}
     </style>
     """
+
+
 
 def generate_html_table(df, journal_style, font_size, h_align, v_align):
     try:
