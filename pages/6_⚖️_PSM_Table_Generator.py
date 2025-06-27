@@ -1,10 +1,8 @@
-
 import streamlit as st
 import pandas as pd
 import csv
 import io
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
-
 
 st.set_page_config(layout="wide")
 st.title("📊 Novak's TriNetX Journal-Style Table Generator")
@@ -157,10 +155,13 @@ if edit_toggle:
     updated_df = pd.DataFrame(grid_response["data"]).drop(columns=["Drag"], errors="ignore")
     if "Characteristic Name" in updated_df.columns:
         st.session_state["row_order"] = list(updated_df["Characteristic Name"])
-    df_trimmed["_row_order"] = df_trimmed[name_col].apply(lambda x: st.session_state["row_order"].index(x) if x in st.session_state["row_order"] else float("inf"))
-    df_trimmed.sort_values("_row_order", inplace=True)
-    df_trimmed.drop(columns=["_row_order"], inplace=True)
-    df_trimmed.reset_index(drop=True, inplace=True)
+    if "Characteristic Name" in df_trimmed.columns and "row_order" in st.session_state:
+        df_trimmed["_row_order"] = df_trimmed["Characteristic Name"].apply(
+            lambda x: st.session_state["row_order"].index(x) if x in st.session_state["row_order"] else float("inf")
+        )
+        df_trimmed.sort_values("_row_order", inplace=True)
+        df_trimmed.drop(columns=["_row_order"], inplace=True)
+        df_trimmed.reset_index(drop=True, inplace=True)
     st.session_state["refresh_preview"] = st.button("🔄 Update Preview Table Now")
     if add_column_grouping:
         try:
@@ -205,7 +206,6 @@ def get_journal_css(journal_style, font_size, h_align, v_align):
     }}
     </style>
     """
-
 
 
 def generate_html_table(df, journal_style, font_size, h_align, v_align):
@@ -253,6 +253,5 @@ html_table = generate_html_table(df_trimmed, journal_style, font_size, h_align, 
 st.markdown("### 🧾 Formatted Table Preview")
 st.markdown(html_table, unsafe_allow_html=True)
 
-# Add a copy-to-clipboard button (note: works in JS frontend only)
 st.markdown("#### 📋 Copy HTML Table to Clipboard")
 st.code(html_table, language='html')
