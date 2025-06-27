@@ -4,7 +4,7 @@ import pandas as pd
 import csv
 import io
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
-import pyperclip
+
 
 st.set_page_config(layout="wide")
 st.title("📊 Novak's TriNetX Journal-Style Table Generator")
