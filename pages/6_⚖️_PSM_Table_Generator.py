@@ -4,6 +4,7 @@ import pandas as pd
 import csv
 import io
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+import pyperclip
 
 st.set_page_config(layout="wide")
 st.title("📊 Novak's TriNetX Journal-Style Table Generator")
@@ -197,5 +198,10 @@ def generate_html_table(df, journal_style, font_size, h_align, v_align):
         return ""
 
 html_table = generate_html_table(df_trimmed, journal_style, font_size, h_align, v_align)
+
 st.markdown("### 🧾 Formatted Table Preview")
 st.markdown(html_table, unsafe_allow_html=True)
+
+# Add a copy-to-clipboard button (note: works in JS frontend only)
+st.markdown("#### 📋 Copy HTML Table to Clipboard")
+st.code(html_table, language='html')
