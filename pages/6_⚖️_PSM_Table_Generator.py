@@ -10,11 +10,20 @@ uploaded_file = st.file_uploader("📂 Upload your TriNetX CSV file and turn it 
 if not uploaded_file:
     st.stop()
 
-# Load and clean CSV
-df_raw = pd.read_csv(uploaded_file, header=None, skiprows=9)
-df_raw.columns = df_raw.iloc[0]
-df_data = df_raw[1:].reset_index(drop=True)
-original_df = df_data.copy()
+# Auto-detect the header row
+lines = uploaded_file.getvalue().decode("utf-8").splitlines()
+header_index = None
+for i, line in enumerate(lines):
+    if line.strip().startswith("Characteristic ID"):
+        header_index = i
+        break
+
+if header_index is None:
+    st.error("❌ Could not locate the header row with 'Characteristic ID'. Please check your file format.")
+    st.stop()
+
+df_raw = pd.read_csv(uploaded_file, header=header_index)
+original_df = df_raw.copy()
 
 # Sidebar Settings UI Changes
 with st.sidebar.expander("### ✍️ Table Operations", expanded=False):
@@ -40,14 +49,14 @@ default_columns = [
     "Cohort 2 After: Patient Count", "Cohort 2 After: % of Cohort", "Cohort 2 After: Mean", "Cohort 2 After: SD",
     "After: p-Value", "After: Standardized Mean Difference"
 ]
-available_columns = list(df_data.columns)
+available_columns = list(df_raw.columns)
 filtered_columns = [col for col in default_columns if col in available_columns]
-df_trimmed = df_data[filtered_columns].copy()
+df_trimmed = df_raw[filtered_columns].copy()
 
 with st.sidebar.expander("📋 Column Selection and Renaming", expanded=False):
     selected_columns = st.multiselect("Select columns to include", available_columns, default=filtered_columns)
     rename_dict = {col: st.text_input(f"Rename '{col}'", col, key=f"rename_{col}") for col in selected_columns}
-df_trimmed = df_data[selected_columns].copy()
+df_trimmed = df_raw[selected_columns].copy()
 df_trimmed.rename(columns=rename_dict, inplace=True)
 df_trimmed.fillna("", inplace=True)
 
@@ -69,6 +78,7 @@ for col in df_trimmed.columns:
     if "p-Value" in col:
         df_trimmed[col] = df_trimmed[col].apply(lambda x: "p<.001" if str(x).strip() == "0" else x)
 
+# Handle grouping rows
 if selected_groups:
     current_rows = df_trimmed.to_dict("records")
     rebuilt_rows = []
@@ -87,7 +97,7 @@ if selected_groups:
             rebuilt_rows.insert(0, group_row)
     df_trimmed = pd.DataFrame(rebuilt_rows)
 
-# FIXED SECTION: Safe retrieval of the name_col
+# Get Characteristic Name column robustly
 if isinstance(df_trimmed.columns, pd.MultiIndex):
     possible_name_cols = [col for col in df_trimmed.columns if col[1] == "Characteristic Name"]
     if possible_name_cols:
@@ -101,6 +111,5 @@ else:
         st.error("Could not find 'Characteristic Name' column.")
         st.stop()
 
-# Initialize row order
 if "row_order" not in st.session_state:
     st.session_state["row_order"] = list(df_trimmed[name_col])
