@@ -95,7 +95,7 @@ if df is not None:
     x_measure = st.sidebar.radio(
         "Plot on X-axis",
         ("Effect Size (Cohen's d, approx.)", "Risk, Odds, or Hazard Ratio"),
-        index=0
+        index=1
     )
 
     plot_title = st.sidebar.text_input("Plot Title", value="Forest Plot")
@@ -109,7 +109,7 @@ if df is not None:
         line_width = st.slider("CI Line Width", 1, 4, 2)
         font_size = st.slider("Font Size", 10, 20, 12)
         label_offset = st.slider("Label Horizontal Offset", 0.01, 0.3, 0.05)
-        use_log = st.checkbox("Use Log Scale for X-axis", value=(x_measure != "Effect Size (Cohen's d, approx.)"))
+        use_log = st.checkbox("Use Log Scale for X-axis", value=False)
         axis_padding = st.slider("X-axis Padding (%)", 2, 40, 10)
         y_axis_padding = st.slider("Y-axis Padding (Rows)", 0.0, 5.0, 1.0, step=0.5)
         cap_height = st.slider("Tick Height (for CI ends)", 0.05, 0.5, 0.18, step=0.01)
