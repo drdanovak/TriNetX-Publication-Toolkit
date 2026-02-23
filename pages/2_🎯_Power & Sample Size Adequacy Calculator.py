@@ -5,7 +5,7 @@ import streamlit as st
 from scipy.stats import norm
 
 st.set_page_config(layout="wide")
-st.title("TriNetX Outcomes: Power + E-value + NNT/NNH Calculator")
+st.title("TriNetX Outcomes: Power, E-value, and NNT/NNH")
 
 # ----------------------------
 # CSV ingestion helpers
