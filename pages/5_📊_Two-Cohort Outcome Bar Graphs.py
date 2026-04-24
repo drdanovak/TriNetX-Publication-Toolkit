@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import textwrap
 from io import BytesIO, StringIO
-from matplotlib.ticker import AutoMinorLocator
+from matplotlib.ticker import AutoMinorLocator, MultipleLocator
 
 # ---------- COLOR PALETTES ----------
 PALETTES = {
@@ -26,6 +26,8 @@ CANONICAL_COLS = [
     "Cohort 1 Upper 95% CI (%)",
     "Cohort 2 Lower 95% CI (%)",
     "Cohort 2 Upper 95% CI (%)",
+    "P Value",
+    "Significant",
 ]
 
 st.set_page_config(page_title="2-Cohort Outcome Bar Chart", layout="centered")
@@ -46,6 +48,8 @@ def initialize_data():
         "Cohort 1 Upper 95% CI (%)": [0.0092],
         "Cohort 2 Lower 95% CI (%)": [0.0096],
         "Cohort 2 Upper 95% CI (%)": [0.0143],
+        "P Value": [0.0210],
+        "Significant": [True],
     })
 
 
@@ -251,6 +255,47 @@ def parse_graph_data_table(graph_df: pd.DataFrame, filename: str, outcome_name: 
     return row, meta
 
 
+def parse_risk_difference_pvalue(risk_df: pd.DataFrame) -> float:
+    risk_df = risk_df.copy()
+    risk_df.columns = [str(c).strip() for c in risk_df.columns]
+    p_col = find_column(risk_df, ["p", "P", "P Value", "P-Value", "PValue"])
+    if p_col is None or risk_df.empty:
+        return np.nan
+    value = pd.to_numeric(risk_df[p_col], errors="coerce")
+    return float(value.iloc[0]) if len(value) and pd.notna(value.iloc[0]) else np.nan
+
+
+def infer_significant_series(df: pd.DataFrame, alpha: float = 0.05) -> pd.Series:
+    pvals = pd.to_numeric(df.get("P Value", np.nan), errors="coerce")
+    sig = df.get("Significant", False)
+    if isinstance(sig, pd.Series):
+        sig_series = sig.fillna(False).astype(bool)
+    else:
+        sig_series = pd.Series([bool(sig)] * len(df), index=df.index)
+    p_sig = pvals.lt(alpha).fillna(False) if isinstance(pvals, pd.Series) else pd.Series([False] * len(df), index=df.index)
+    return sig_series | p_sig
+
+
+def nice_tick_interval(max_value: float) -> float:
+    max_value = float(max_value) if pd.notna(max_value) else 1.0
+    if max_value <= 0:
+        return 1.0
+    rough = max_value / 5.0
+    exponent = np.floor(np.log10(rough)) if rough > 0 else 0
+    fraction = rough / (10 ** exponent) if rough > 0 else 1
+    if fraction <= 1:
+        nice_fraction = 1
+    elif fraction <= 2:
+        nice_fraction = 2
+    elif fraction <= 2.5:
+        nice_fraction = 2.5
+    elif fraction <= 5:
+        nice_fraction = 5
+    else:
+        nice_fraction = 10
+    return float(nice_fraction * (10 ** exponent))
+
+
 def extract_section_from_excel(uploaded_file, section_label: str) -> pd.DataFrame | None:
     uploaded_file.seek(0)
     sheets = pd.read_excel(uploaded_file, sheet_name=None, header=None)
@@ -296,34 +341,49 @@ def parse_trinetx_export(uploaded_file, outcome_name: str | None = None) -> tupl
     filename = getattr(uploaded_file, "name", "")
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else "csv"
 
+    def attach_significance(row: pd.DataFrame, risk_diff_df: pd.DataFrame | None):
+        p_value = parse_risk_difference_pvalue(risk_diff_df) if risk_diff_df is not None else np.nan
+        row = row.copy()
+        row["P Value"] = p_value
+        row["Significant"] = bool(pd.notna(p_value) and float(p_value) < 0.05)
+        return row
+
     if suffix in ["xlsx", "xls"]:
         cohort_df = extract_section_from_excel(uploaded_file, "Cohort Statistics")
+        graph_df = extract_section_from_excel(uploaded_file, "Graph Data Table")
+        risk_diff_df = extract_section_from_excel(uploaded_file, "Risk Difference")
         if cohort_df is not None:
             row, meta = parse_cohort_statistics_table(cohort_df, filename, outcome_name)
+            row = attach_significance(row, risk_diff_df)
             return row, meta, "Cohort Statistics table with Wilson 95% CIs"
-        graph_df = extract_section_from_excel(uploaded_file, "Graph Data Table")
         if graph_df is not None:
             row, meta = parse_graph_data_table(graph_df, filename, outcome_name)
+            row = attach_significance(row, risk_diff_df)
             return row, meta, "Graph Data Table"
         raise ValueError("Could not find either a Cohort Statistics section or a Graph Data Table section.")
 
     text = read_uploaded_text(uploaded_file)
     cohort_df = read_section_after_label_csv(text, "Cohort Statistics")
+    graph_df = read_section_after_label_csv(text, "Graph Data Table")
+    risk_diff_df = read_section_after_label_csv(text, "Risk Difference")
     if cohort_df is not None:
         row, meta = parse_cohort_statistics_table(cohort_df, filename, outcome_name)
+        row = attach_significance(row, risk_diff_df)
         return row, meta, "Cohort Statistics table with Wilson 95% CIs"
-    graph_df = read_section_after_label_csv(text, "Graph Data Table")
     if graph_df is not None:
         row, meta = parse_graph_data_table(graph_df, filename, outcome_name)
+        row = attach_significance(row, risk_diff_df)
         return row, meta, "Graph Data Table"
 
     # Fallback: allow direct CSV table import if it already starts with headers.
     fallback_df = pd.read_csv(StringIO(text))
     try:
         row, meta = parse_cohort_statistics_table(fallback_df, filename, outcome_name)
+        row = attach_significance(row, risk_diff_df)
         return row, meta, "direct Cohort Statistics table with Wilson 95% CIs"
     except Exception:
         row, meta = parse_graph_data_table(fallback_df, filename, outcome_name)
+        row = attach_significance(row, risk_diff_df)
         return row, meta, "direct Graph Data Table"
 
 
@@ -339,10 +399,17 @@ def coerce_app_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns={df.columns[2]: "Cohort 2 Risk (%)"})
     for col in CANONICAL_COLS:
         if col not in df.columns:
-            df[col] = np.nan if col != "Outcome Name" else ""
+            if col == "Outcome Name":
+                df[col] = ""
+            elif col == "Significant":
+                df[col] = False
+            else:
+                df[col] = np.nan
     df = df[CANONICAL_COLS]
-    for col in CANONICAL_COLS[1:]:
+    numeric_cols = [c for c in CANONICAL_COLS if c not in {"Outcome Name", "Significant"}]
+    for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["Significant"] = df["Significant"].apply(lambda x: str(x).strip().lower() in {"true", "1", "yes", "y"} if pd.notna(x) and not isinstance(x, bool) else bool(x)).fillna(False)
     df["Outcome Name"] = df["Outcome Name"].astype(str)
     return df.dropna(subset=["Outcome Name", "Cohort 1 Risk (%)", "Cohort 2 Risk (%)"], how="all")
 
@@ -427,6 +494,8 @@ display_df = df.rename(columns={
     "Cohort 1 Upper 95% CI (%)": f"{cohort1_name} Upper 95% CI (%)",
     "Cohort 2 Lower 95% CI (%)": f"{cohort2_name} Lower 95% CI (%)",
     "Cohort 2 Upper 95% CI (%)": f"{cohort2_name} Upper 95% CI (%)",
+    "P Value": "P Value",
+    "Significant": "Significant Difference?",
 })
 
 st.subheader("Outcome Data")
@@ -445,6 +514,8 @@ edited_display_df = st.data_editor(
         f"{cohort1_name} Upper 95% CI (%)": st.column_config.NumberColumn(f"{cohort1_name} Upper 95% CI (%)", min_value=0.0, max_value=100.0, step=0.0001, format="%.6f"),
         f"{cohort2_name} Lower 95% CI (%)": st.column_config.NumberColumn(f"{cohort2_name} Lower 95% CI (%)", min_value=0.0, max_value=100.0, step=0.0001, format="%.6f"),
         f"{cohort2_name} Upper 95% CI (%)": st.column_config.NumberColumn(f"{cohort2_name} Upper 95% CI (%)", min_value=0.0, max_value=100.0, step=0.0001, format="%.6f"),
+        "P Value": st.column_config.NumberColumn("P Value", min_value=0.0, max_value=1.0, step=0.0001, format="%.6f"),
+        "Significant Difference?": st.column_config.CheckboxColumn("Significant Difference?"),
     },
     key="data_editor",
 )
@@ -456,6 +527,7 @@ edited_df = edited_display_df.rename(columns={
     f"{cohort1_name} Upper 95% CI (%)": "Cohort 1 Upper 95% CI (%)",
     f"{cohort2_name} Lower 95% CI (%)": "Cohort 2 Lower 95% CI (%)",
     f"{cohort2_name} Upper 95% CI (%)": "Cohort 2 Upper 95% CI (%)",
+    "Significant Difference?": "Significant",
 })
 st.session_state.data = coerce_app_dataframe(edited_df)
 df = st.session_state.data.copy()
@@ -487,6 +559,8 @@ value_decimals = st.sidebar.slider("Value Label Decimals", 2, 6, 4)
 show_error_bars = st.sidebar.checkbox("Show 95% CI error bars", value=True, help="Uses lower/upper 95% CI columns imported from TriNetX or entered manually.")
 error_bar_capsize = st.sidebar.slider("Error Bar Cap Size", 0, 12, 4)
 error_bar_linewidth = st.sidebar.slider("Error Bar Line Width", 0.5, 4.0, 1.4, step=0.1)
+show_significance_stars = st.sidebar.checkbox("Add * above significant differences", value=False, help="Adds an asterisk when the row is marked Significant Difference? or when P Value is below the alpha threshold.")
+significance_alpha = st.sidebar.number_input("Significance alpha", min_value=0.000001, max_value=1.0, value=0.05, step=0.001, format="%.6f")
 
 st.sidebar.header("Figure Size")
 size_unit = st.sidebar.radio("Size Unit", ["Inches", "Pixels"], index=0, horizontal=True)
@@ -512,6 +586,29 @@ else:
 
 st.sidebar.caption(f"Rendered Matplotlib size: {figure_width_inches:.2f} × {figure_height_inches:.2f} inches at {export_dpi} DPI")
 
+percent_axis_label = "Y-axis" if orientation == "Vertical" else "X-axis"
+axis_data_max = pd.concat([
+    pd.to_numeric(df["Cohort 1 Risk (%)"], errors="coerce"),
+    pd.to_numeric(df["Cohort 2 Risk (%)"], errors="coerce"),
+    pd.to_numeric(df["Cohort 1 Upper 95% CI (%)"], errors="coerce"),
+    pd.to_numeric(df["Cohort 2 Upper 95% CI (%)"], errors="coerce"),
+]).dropna()
+suggested_axis_max = float(axis_data_max.max()) if not axis_data_max.empty else 1.0
+suggested_axis_max = max(1.0, suggested_axis_max * 1.4)
+suggested_tick_interval = nice_tick_interval(suggested_axis_max)
+
+st.sidebar.header("% Axis Settings")
+manual_percent_axis = st.sidebar.checkbox(f"Manually set {percent_axis_label} length and intervals", value=False)
+percent_axis_min = 0.0
+percent_axis_max = suggested_axis_max
+percent_axis_tick_interval = suggested_tick_interval
+if manual_percent_axis:
+    percent_axis_min = st.sidebar.number_input(f"{percent_axis_label} minimum (%)", value=0.0, step=float(max(suggested_tick_interval / 5.0, 0.000001)), format="%.6f")
+    percent_axis_max = st.sidebar.number_input(f"{percent_axis_label} maximum (%)", value=float(round(suggested_axis_max, 6)), step=float(max(suggested_tick_interval / 2.0, 0.000001)), format="%.6f")
+    percent_axis_tick_interval = st.sidebar.number_input(f"{percent_axis_label} major tick interval (%)", min_value=0.000001, value=float(round(suggested_tick_interval, 6)), step=float(max(suggested_tick_interval / 5.0, 0.000001)), format="%.6f")
+    if percent_axis_max <= percent_axis_min:
+        st.sidebar.error("The % axis maximum must be greater than the minimum.")
+
 st.subheader("Bar Chart")
 
 if show_error_bars:
@@ -522,13 +619,19 @@ if show_error_bars:
     if df[needed_ci_cols].isna().all(axis=None):
         st.info("Error bars are enabled, but no 95% CI columns are populated. Upload a Cohort Statistics export or enter CI values manually.")
 
+if show_significance_stars:
+    if pd.to_numeric(df.get("P Value", np.nan), errors="coerce").isna().all() and not df.get("Significant", pd.Series(False, index=df.index)).astype(bool).any():
+        st.info("Significance stars are enabled, but no p-values or manual Significant Difference? flags are populated yet.")
+
 
 def plot_2cohort_outcomes(
     df, cohort1, cohort2, color1, color2, orientation, font_family, font_size, tick_fontsize,
     bar_width, gridlines, show_values, show_legend, group_gap, pair_gap, major_tick_length, minor_ticks,
     show_error_bars=False, error_bar_capsize=4, error_bar_linewidth=1.4, value_decimals=4,
     figure_width_inches=10.0, figure_height_inches=6.0, x_axis_label="", y_axis_label="",
-    auto_avoid_text_collisions=True, wrap_outcome_labels=True, max_label_chars=18, vertical_tick_rotation=30
+    auto_avoid_text_collisions=True, wrap_outcome_labels=True, max_label_chars=18, vertical_tick_rotation=30,
+    show_significance_stars=False, significance_alpha=0.05,
+    manual_percent_axis=False, percent_axis_min=0.0, percent_axis_max=None, percent_axis_tick_interval=None,
 ):
     df = coerce_app_dataframe(df)
     if len(df) == 0:
@@ -541,12 +644,12 @@ def plot_2cohort_outcomes(
         display_outcomes = ["\n".join(textwrap.wrap(str(label), width=max_label_chars, break_long_words=False)) or str(label) for label in outcomes]
     else:
         display_outcomes = [str(label) for label in outcomes]
-    cohort1_vals = df["Cohort 1 Risk (%)"].fillna(0).tolist()
-    cohort2_vals = df["Cohort 2 Risk (%)"].fillna(0).tolist()
-    n = len(outcomes)
-    group_centers = np.arange(n) * group_gap
+
+    cohort1_vals = df["Cohort 1 Risk (%)"].fillna(0).astype(float).tolist()
+    cohort2_vals = df["Cohort 2 Risk (%)"].fillna(0).astype(float).tolist()
+    group_centers = np.arange(len(outcomes)) * group_gap
     pair_offset = pair_gap / 2
-    max_val = max(cohort1_vals + cohort2_vals) if cohort1_vals + cohort2_vals else 0
+    max_val = max(cohort1_vals + cohort2_vals) if cohort1_vals + cohort2_vals else 0.0
 
     error_cols = [
         "Cohort 1 Lower 95% CI (%)", "Cohort 1 Upper 95% CI (%)",
@@ -562,23 +665,6 @@ def plot_2cohort_outcomes(
         upper_err = np.where(np.isfinite(upper_arr), np.maximum(upper_arr - values_arr, 0), 0)
         return np.vstack([lower_err, upper_err])
 
-    max_ci_val = max_val
-    if has_error_data:
-        ci_upper_values = pd.concat([
-            pd.to_numeric(df["Cohort 1 Upper 95% CI (%)"], errors="coerce"),
-            pd.to_numeric(df["Cohort 2 Upper 95% CI (%)"], errors="coerce"),
-        ]).dropna()
-        if not ci_upper_values.empty:
-            max_ci_val = max(max_val, float(ci_upper_values.max()))
-
-    plt.style.use("default")
-    fig_width = max(2.0, float(figure_width_inches))
-    fig_height = max(2.0, float(figure_height_inches))
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    fig.patch.set_facecolor("#FAFAFA")
-    ax.set_facecolor("#FAFAFA")
-    value_fmt = "{:,." + str(value_decimals) + "f}%"
-
     def finite_or_value(candidate, fallback):
         try:
             candidate = float(candidate)
@@ -593,6 +679,28 @@ def plot_2cohort_outcomes(
             return finite_or_value(pd.to_numeric(df[col_name], errors="coerce").iloc[idx], fallback)
         return float(fallback)
 
+    max_ci_val = max_val
+    if has_error_data:
+        ci_upper_values = pd.concat([
+            pd.to_numeric(df["Cohort 1 Upper 95% CI (%)"], errors="coerce"),
+            pd.to_numeric(df["Cohort 2 Upper 95% CI (%)"], errors="coerce"),
+        ]).dropna()
+        if not ci_upper_values.empty:
+            max_ci_val = max(max_val, float(ci_upper_values.max()))
+
+    annotation_multiplier = 1.32
+    if show_values and auto_avoid_text_collisions:
+        annotation_multiplier += 0.13
+    if show_significance_stars:
+        annotation_multiplier += 0.12
+
+    plt.style.use("default")
+    fig, ax = plt.subplots(figsize=(max(2.0, float(figure_width_inches)), max(2.0, float(figure_height_inches))))
+    fig.patch.set_facecolor("#FAFAFA")
+    ax.set_facecolor("#FAFAFA")
+    value_fmt = "{:,." + str(value_decimals) + "f}%"
+    sig_mask = infer_significant_series(df, alpha=float(significance_alpha))
+
     if orientation == "Vertical":
         bars1 = ax.bar(group_centers - pair_offset, cohort1_vals, bar_width, label=cohort1, color=color1, linewidth=0, zorder=3)
         bars2 = ax.bar(group_centers + pair_offset, cohort2_vals, bar_width, label=cohort2, color=color2, linewidth=0, zorder=3)
@@ -603,32 +711,45 @@ def plot_2cohort_outcomes(
         ax.set_xticklabels(display_outcomes, fontsize=font_size, fontweight="bold", rotation=vertical_tick_rotation, ha="right" if vertical_tick_rotation else "center", fontname=font_family)
         ax.set_ylabel(y_axis_label or "Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family, labelpad=max(8, font_size // 2))
         ax.set_xlabel(x_axis_label or "Outcome", fontsize=font_size + 2, fontname=font_family, labelpad=max(10, font_size // 2))
-        axis_pad_multiplier = 1.45 if (show_values and auto_avoid_text_collisions) else 1.32
-        ax.set_ylim([0, max(0.001, max_ci_val * axis_pad_multiplier)])
-        if show_values:
-            # Place labels above the upper CI cap rather than above the bar height.
-            # Within each outcome group, stagger labels when their anchors are close.
-            offset = max(0.00001, max_ci_val * 0.04)
-            min_vertical_gap = max(0.00001, max_ci_val * 0.075) if auto_avoid_text_collisions else 0
-            for i, (rect1, rect2) in enumerate(zip(bars1, bars2)):
-                h1 = rect1.get_height()
-                h2 = rect2.get_height()
-                y1 = upper_anchor("Cohort 1 Upper 95% CI (%)", i, h1) + offset
-                y2 = upper_anchor("Cohort 2 Upper 95% CI (%)", i, h2) + offset
-                if auto_avoid_text_collisions and h1 > 0 and h2 > 0 and abs(y1 - y2) < min_vertical_gap:
-                    if y1 <= y2:
-                        y2 = y1 + min_vertical_gap
-                    else:
-                        y1 = y2 + min_vertical_gap
+
+        if manual_percent_axis and percent_axis_max is not None:
+            ax.set_ylim([float(percent_axis_min), float(percent_axis_max)])
+            if percent_axis_tick_interval and float(percent_axis_tick_interval) > 0:
+                ax.yaxis.set_major_locator(MultipleLocator(float(percent_axis_tick_interval)))
+                if minor_ticks:
+                    ax.yaxis.set_minor_locator(AutoMinorLocator())
+        else:
+            ax.set_ylim([0, max(0.001, max_ci_val * annotation_multiplier)])
+
+        label_positions = []
+        offset = max(0.00001, max_ci_val * 0.04 if max_ci_val > 0 else 0.02)
+        min_vertical_gap = max(0.00001, max_ci_val * 0.075) if auto_avoid_text_collisions else 0
+        star_offset = max(offset * 1.25, max_ci_val * 0.05 if max_ci_val > 0 else 0.03)
+        for i, (rect1, rect2) in enumerate(zip(bars1, bars2)):
+            h1 = rect1.get_height()
+            h2 = rect2.get_height()
+            y1 = upper_anchor("Cohort 1 Upper 95% CI (%)", i, h1) + offset
+            y2 = upper_anchor("Cohort 2 Upper 95% CI (%)", i, h2) + offset
+            if auto_avoid_text_collisions and h1 > 0 and h2 > 0 and abs(y1 - y2) < min_vertical_gap:
+                if y1 <= y2:
+                    y2 = y1 + min_vertical_gap
+                else:
+                    y1 = y2 + min_vertical_gap
+            label_positions.append((y1, y2))
+            if show_values:
                 if h1 > 0:
                     ax.text(rect1.get_x() + rect1.get_width() / 2., y1, value_fmt.format(h1), ha="center", va="bottom", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
                 if h2 > 0:
                     ax.text(rect2.get_x() + rect2.get_width() / 2., y2, value_fmt.format(h2), ha="center", va="bottom", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
+            if show_significance_stars and bool(sig_mask.iloc[i]):
+                star_base = max(y1 if show_values else upper_anchor("Cohort 1 Upper 95% CI (%)", i, h1), y2 if show_values else upper_anchor("Cohort 2 Upper 95% CI (%)", i, h2))
+                ax.text(group_centers[i], star_base + star_offset, "*", ha="center", va="bottom", fontsize=font_size + 6, fontweight="bold", fontname=font_family, clip_on=False)
+
         if gridlines:
             ax.yaxis.grid(True, color="#DDDDDD", zorder=0)
         ax.xaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
         ax.yaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
-        if minor_ticks:
+        if minor_ticks and not manual_percent_axis:
             ax.yaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_tick_params(which="minor", length=int(major_tick_length * 0.7), width=0.8)
     else:
@@ -641,47 +762,41 @@ def plot_2cohort_outcomes(
         ax.set_yticklabels(display_outcomes, fontsize=font_size, fontweight="bold", fontname=font_family)
         ax.set_xlabel(x_axis_label or "Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family, labelpad=max(8, font_size // 2))
         ax.set_ylabel(y_axis_label or "Outcome", fontsize=font_size + 2, fontname=font_family, labelpad=max(10, font_size // 2))
-        axis_pad_multiplier = 1.55 if (show_values and auto_avoid_text_collisions) else 1.32
-        ax.set_xlim([0, max(0.001, max_ci_val * axis_pad_multiplier)])
-        if show_values:
-            # Place labels to the right of the upper CI cap rather than the bar end.
-            # This prevents value labels from colliding with horizontal error bars.
-            offset = max(0.00001, max_ci_val * 0.045)
-            for i, rect in enumerate(bars1):
-                width_val = rect.get_width()
-                if width_val > 0:
-                    anchor = upper_anchor("Cohort 1 Upper 95% CI (%)", i, width_val)
-                    ax.text(
-                        anchor + offset,
-                        rect.get_y() + rect.get_height() / 2.,
-                        value_fmt.format(width_val),
-                        va="center",
-                        ha="left",
-                        fontsize=max(6, font_size - 1),
-                        fontweight="medium",
-                        fontname=font_family,
-                        clip_on=False,
-                    )
-            for i, rect in enumerate(bars2):
-                width_val = rect.get_width()
-                if width_val > 0:
-                    anchor = upper_anchor("Cohort 2 Upper 95% CI (%)", i, width_val)
-                    ax.text(
-                        anchor + offset,
-                        rect.get_y() + rect.get_height() / 2.,
-                        value_fmt.format(width_val),
-                        va="center",
-                        ha="left",
-                        fontsize=max(6, font_size - 1),
-                        fontweight="medium",
-                        fontname=font_family,
-                        clip_on=False,
-                    )
+
+        if manual_percent_axis and percent_axis_max is not None:
+            ax.set_xlim([float(percent_axis_min), float(percent_axis_max)])
+            if percent_axis_tick_interval and float(percent_axis_tick_interval) > 0:
+                ax.xaxis.set_major_locator(MultipleLocator(float(percent_axis_tick_interval)))
+                if minor_ticks:
+                    ax.xaxis.set_minor_locator(AutoMinorLocator())
+        else:
+            ax.set_xlim([0, max(0.001, max_ci_val * annotation_multiplier)])
+
+        offset = max(0.00001, max_ci_val * 0.045 if max_ci_val > 0 else 0.02)
+        star_offset = max(offset * 1.3, max_ci_val * 0.06 if max_ci_val > 0 else 0.03)
+        for i, rect in enumerate(bars1):
+            width_val = rect.get_width()
+            if show_values and width_val > 0:
+                anchor = upper_anchor("Cohort 1 Upper 95% CI (%)", i, width_val)
+                ax.text(anchor + offset, rect.get_y() + rect.get_height() / 2., value_fmt.format(width_val), va="center", ha="left", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
+        for i, rect in enumerate(bars2):
+            width_val = rect.get_width()
+            if show_values and width_val > 0:
+                anchor = upper_anchor("Cohort 2 Upper 95% CI (%)", i, width_val)
+                ax.text(anchor + offset, rect.get_y() + rect.get_height() / 2., value_fmt.format(width_val), va="center", ha="left", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
+        if show_significance_stars:
+            for i in range(len(group_centers)):
+                if bool(sig_mask.iloc[i]):
+                    base1 = upper_anchor("Cohort 1 Upper 95% CI (%)", i, cohort1_vals[i]) + (offset if show_values else 0)
+                    base2 = upper_anchor("Cohort 2 Upper 95% CI (%)", i, cohort2_vals[i]) + (offset if show_values else 0)
+                    star_x = max(base1, base2) + star_offset
+                    ax.text(star_x, group_centers[i], "*", va="center", ha="left", fontsize=font_size + 6, fontweight="bold", fontname=font_family, clip_on=False)
+
         if gridlines:
             ax.xaxis.grid(True, color="#DDDDDD", zorder=0)
         ax.xaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
         ax.yaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
-        if minor_ticks:
+        if minor_ticks and not manual_percent_axis:
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.xaxis.set_tick_params(which="minor", length=int(major_tick_length * 0.7), width=0.8)
 
@@ -690,24 +805,26 @@ def plot_2cohort_outcomes(
 
     for spine in ["top", "right", "left", "bottom"]:
         ax.spines[spine].set_visible(False)
-    # Conservative spacing to reduce collisions among long tick labels, axis titles, legends, and annotations.
+
     if auto_avoid_text_collisions:
         if orientation == "Horizontal":
             longest = max([len(str(x)) for x in outcomes] or [0])
             left_margin = min(0.48, max(0.22, 0.10 + 0.010 * longest))
-            right_margin = 0.76 if show_legend else 0.94
+            right_margin = 0.70 if show_legend else (0.82 if (show_values or show_significance_stars) else 0.92)
             fig.subplots_adjust(left=left_margin, right=right_margin, top=0.94, bottom=0.16)
         else:
             longest = max([len(str(x)) for x in outcomes] or [0])
             bottom_margin = min(0.48, max(0.22, 0.08 + 0.012 * longest))
+            top_margin = 0.84 if (show_values or show_significance_stars) else 0.92
             right_margin = 0.76 if show_legend else 0.94
-            fig.subplots_adjust(left=0.14, right=right_margin, top=0.92, bottom=bottom_margin)
+            fig.subplots_adjust(left=0.14, right=right_margin, top=top_margin, bottom=bottom_margin)
     else:
         plt.tight_layout(rect=[0, 0, 0.89 if show_legend else 1, 1], pad=1.2)
     return fig
 
 
 fig = plot_2cohort_outcomes(
+
     df,
     cohort1=cohort1_name,
     cohort2=cohort2_name,
@@ -737,6 +854,12 @@ fig = plot_2cohort_outcomes(
     wrap_outcome_labels=wrap_outcome_labels,
     max_label_chars=max_label_chars,
     vertical_tick_rotation=vertical_tick_rotation,
+    show_significance_stars=show_significance_stars,
+    significance_alpha=significance_alpha,
+    manual_percent_axis=manual_percent_axis,
+    percent_axis_min=percent_axis_min,
+    percent_axis_max=percent_axis_max,
+    percent_axis_tick_interval=percent_axis_tick_interval,
 )
 
 st.pyplot(fig, use_container_width=False)
