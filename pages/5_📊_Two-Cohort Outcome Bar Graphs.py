@@ -538,6 +538,20 @@ def plot_2cohort_outcomes(
     ax.set_facecolor("#FAFAFA")
     value_fmt = "{:,." + str(value_decimals) + "f}%"
 
+    def finite_or_value(candidate, fallback):
+        try:
+            candidate = float(candidate)
+            if np.isfinite(candidate):
+                return candidate
+        except Exception:
+            pass
+        return float(fallback)
+
+    def upper_anchor(col_name, idx, fallback):
+        if has_error_data and col_name in df.columns:
+            return finite_or_value(pd.to_numeric(df[col_name], errors="coerce").iloc[idx], fallback)
+        return float(fallback)
+
     if orientation == "Vertical":
         bars1 = ax.bar(group_centers - pair_offset, cohort1_vals, bar_width, label=cohort1, color=color1, linewidth=0, zorder=3)
         bars2 = ax.bar(group_centers + pair_offset, cohort2_vals, bar_width, label=cohort2, color=color2, linewidth=0, zorder=3)
@@ -548,13 +562,39 @@ def plot_2cohort_outcomes(
         ax.set_xticklabels(outcomes, fontsize=font_size, fontweight="bold", rotation=15, ha="right", fontname=font_family)
         ax.set_ylabel("Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family)
         ax.set_xlabel("Outcome", fontsize=font_size + 2, fontname=font_family)
-        ax.set_ylim([0, max(0.001, max_ci_val * 1.22)])
+        ax.set_ylim([0, max(0.001, max_ci_val * 1.32)])
         if show_values:
-            offset = max(0.00001, max_ci_val * 0.03)
-            for rect in list(bars1) + list(bars2):
+            # Place labels above the upper CI cap rather than above the bar height.
+            # This prevents value labels from colliding with error bars.
+            offset = max(0.00001, max_ci_val * 0.035)
+            for i, rect in enumerate(bars1):
                 height = rect.get_height()
                 if height > 0:
-                    ax.text(rect.get_x() + rect.get_width() / 2., height + offset, value_fmt.format(height), ha="center", va="bottom", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family)
+                    anchor = upper_anchor("Cohort 1 Upper 95% CI (%)", i, height)
+                    ax.text(
+                        rect.get_x() + rect.get_width() / 2.,
+                        anchor + offset,
+                        value_fmt.format(height),
+                        ha="center",
+                        va="bottom",
+                        fontsize=max(6, font_size - 1),
+                        fontweight="medium",
+                        fontname=font_family,
+                    )
+            for i, rect in enumerate(bars2):
+                height = rect.get_height()
+                if height > 0:
+                    anchor = upper_anchor("Cohort 2 Upper 95% CI (%)", i, height)
+                    ax.text(
+                        rect.get_x() + rect.get_width() / 2.,
+                        anchor + offset,
+                        value_fmt.format(height),
+                        ha="center",
+                        va="bottom",
+                        fontsize=max(6, font_size - 1),
+                        fontweight="medium",
+                        fontname=font_family,
+                    )
         if gridlines:
             ax.yaxis.grid(True, color="#DDDDDD", zorder=0)
         ax.xaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
@@ -572,13 +612,39 @@ def plot_2cohort_outcomes(
         ax.set_yticklabels(outcomes, fontsize=font_size, fontweight="bold", fontname=font_family)
         ax.set_xlabel("Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family)
         ax.set_ylabel("Outcome", fontsize=font_size + 2, fontname=font_family)
-        ax.set_xlim([0, max(0.001, max_ci_val * 1.22)])
+        ax.set_xlim([0, max(0.001, max_ci_val * 1.32)])
         if show_values:
-            offset = max(0.00001, max_ci_val * 0.03)
-            for rect in list(bars1) + list(bars2):
+            # Place labels to the right of the upper CI cap rather than the bar end.
+            # This prevents value labels from colliding with horizontal error bars.
+            offset = max(0.00001, max_ci_val * 0.035)
+            for i, rect in enumerate(bars1):
                 width_val = rect.get_width()
                 if width_val > 0:
-                    ax.text(width_val + offset, rect.get_y() + rect.get_height() / 2., value_fmt.format(width_val), va="center", ha="left", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family)
+                    anchor = upper_anchor("Cohort 1 Upper 95% CI (%)", i, width_val)
+                    ax.text(
+                        anchor + offset,
+                        rect.get_y() + rect.get_height() / 2.,
+                        value_fmt.format(width_val),
+                        va="center",
+                        ha="left",
+                        fontsize=max(6, font_size - 1),
+                        fontweight="medium",
+                        fontname=font_family,
+                    )
+            for i, rect in enumerate(bars2):
+                width_val = rect.get_width()
+                if width_val > 0:
+                    anchor = upper_anchor("Cohort 2 Upper 95% CI (%)", i, width_val)
+                    ax.text(
+                        anchor + offset,
+                        rect.get_y() + rect.get_height() / 2.,
+                        value_fmt.format(width_val),
+                        va="center",
+                        ha="left",
+                        fontsize=max(6, font_size - 1),
+                        fontweight="medium",
+                        fontname=font_family,
+                    )
         if gridlines:
             ax.xaxis.grid(True, color="#DDDDDD", zorder=0)
         ax.xaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
