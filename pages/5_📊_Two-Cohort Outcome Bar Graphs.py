@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import textwrap
 from io import BytesIO, StringIO
 from matplotlib.ticker import AutoMinorLocator
 
@@ -32,7 +33,7 @@ st.set_page_config(page_title="2-Cohort Outcome Bar Chart", layout="centered")
 st.title("Two-Cohort Outcome Bar Chart")
 st.markdown("""
 Enter outcome risks manually or upload TriNetX Measures of Association exports.  
-This version imports the standard **MOA table** format with a `Cohort Statistics` section and automatically calculates cohort risk percentages and 95% confidence intervals for the risk estimates.
+This version imports the standard **MOA table** format with a `Cohort Statistics` section, automatically calculates cohort risk percentages and 95% confidence intervals for the risk estimates, and includes customizable axis labels and text-collision avoidance.
 """)
 
 
@@ -462,9 +463,17 @@ df = st.session_state.data.copy()
 # ---------- CHART CONTROLS ----------
 st.sidebar.header("Chart Appearance")
 orientation = st.sidebar.radio("Bar Orientation", ["Vertical", "Horizontal"], index=1)
+default_x_axis_label = "Outcome" if orientation == "Vertical" else "Risk (%)"
+default_y_axis_label = "Risk (%)" if orientation == "Vertical" else "Outcome"
+x_axis_label = st.sidebar.text_input("X-axis Label", default_x_axis_label)
+y_axis_label = st.sidebar.text_input("Y-axis Label", default_y_axis_label)
 font_family = st.sidebar.selectbox("Font Family", ["Arial", "Helvetica", "Times New Roman", "Courier New", "Verdana"], index=0)
 font_size = st.sidebar.slider("Font Size", 8, 32, 14)
 tick_fontsize = st.sidebar.slider("Tick Mark Font Size", 6, 28, 11)
+auto_avoid_text_collisions = st.sidebar.checkbox("Automatically avoid text collisions", value=True, help="Wraps long outcome labels, expands plot limits for value labels, and uses conservative margins so labels, error bars, and legends do not overlap.")
+wrap_outcome_labels = st.sidebar.checkbox("Wrap long outcome labels", value=True)
+max_label_chars = st.sidebar.slider("Max characters per outcome-label line", 8, 40, 18)
+vertical_tick_rotation = st.sidebar.slider("Vertical-chart outcome label rotation", 0, 90, 30)
 major_tick_length = st.sidebar.slider("Major Tick Length", 2, 15, 8)
 minor_ticks = st.sidebar.checkbox("Show Minor Ticks", value=True)
 
@@ -478,6 +487,30 @@ value_decimals = st.sidebar.slider("Value Label Decimals", 2, 6, 4)
 show_error_bars = st.sidebar.checkbox("Show 95% CI error bars", value=True, help="Uses lower/upper 95% CI columns imported from TriNetX or entered manually.")
 error_bar_capsize = st.sidebar.slider("Error Bar Cap Size", 0, 12, 4)
 error_bar_linewidth = st.sidebar.slider("Error Bar Line Width", 0.5, 4.0, 1.4, step=0.1)
+
+st.sidebar.header("Figure Size")
+size_unit = st.sidebar.radio("Size Unit", ["Inches", "Pixels"], index=0, horizontal=True)
+export_dpi = st.sidebar.number_input(
+    "DPI for display/export",
+    min_value=72,
+    max_value=600,
+    value=300,
+    step=25,
+    help="When Pixels is selected, width and height are converted to inches using this DPI. For example, 1800 px at 300 DPI becomes 6 inches."
+)
+
+if size_unit == "Inches":
+    figure_width = st.sidebar.number_input("Figure Width (inches)", min_value=2.0, max_value=30.0, value=10.0, step=0.25)
+    figure_height = st.sidebar.number_input("Figure Height (inches)", min_value=2.0, max_value=30.0, value=6.0, step=0.25)
+    figure_width_inches = float(figure_width)
+    figure_height_inches = float(figure_height)
+else:
+    figure_width_px = st.sidebar.number_input("Figure Width (pixels)", min_value=300, max_value=8000, value=1800, step=100)
+    figure_height_px = st.sidebar.number_input("Figure Height (pixels)", min_value=300, max_value=8000, value=1200, step=100)
+    figure_width_inches = float(figure_width_px) / float(export_dpi)
+    figure_height_inches = float(figure_height_px) / float(export_dpi)
+
+st.sidebar.caption(f"Rendered Matplotlib size: {figure_width_inches:.2f} × {figure_height_inches:.2f} inches at {export_dpi} DPI")
 
 st.subheader("Bar Chart")
 
@@ -493,7 +526,9 @@ if show_error_bars:
 def plot_2cohort_outcomes(
     df, cohort1, cohort2, color1, color2, orientation, font_family, font_size, tick_fontsize,
     bar_width, gridlines, show_values, show_legend, group_gap, pair_gap, major_tick_length, minor_ticks,
-    show_error_bars=False, error_bar_capsize=4, error_bar_linewidth=1.4, value_decimals=4
+    show_error_bars=False, error_bar_capsize=4, error_bar_linewidth=1.4, value_decimals=4,
+    figure_width_inches=10.0, figure_height_inches=6.0, x_axis_label="", y_axis_label="",
+    auto_avoid_text_collisions=True, wrap_outcome_labels=True, max_label_chars=18, vertical_tick_rotation=30
 ):
     df = coerce_app_dataframe(df)
     if len(df) == 0:
@@ -502,6 +537,10 @@ def plot_2cohort_outcomes(
         return fig
 
     outcomes = df["Outcome Name"].tolist()
+    if wrap_outcome_labels:
+        display_outcomes = ["\n".join(textwrap.wrap(str(label), width=max_label_chars, break_long_words=False)) or str(label) for label in outcomes]
+    else:
+        display_outcomes = [str(label) for label in outcomes]
     cohort1_vals = df["Cohort 1 Risk (%)"].fillna(0).tolist()
     cohort2_vals = df["Cohort 2 Risk (%)"].fillna(0).tolist()
     n = len(outcomes)
@@ -533,7 +572,9 @@ def plot_2cohort_outcomes(
             max_ci_val = max(max_val, float(ci_upper_values.max()))
 
     plt.style.use("default")
-    fig, ax = plt.subplots(figsize=(max(7, 1.2 * n * group_gap), 5.2))
+    fig_width = max(2.0, float(figure_width_inches))
+    fig_height = max(2.0, float(figure_height_inches))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     fig.patch.set_facecolor("#FAFAFA")
     ax.set_facecolor("#FAFAFA")
     value_fmt = "{:,." + str(value_decimals) + "f}%"
@@ -559,42 +600,30 @@ def plot_2cohort_outcomes(
             ax.errorbar(group_centers - pair_offset, cohort1_vals, yerr=asymmetric_errors(cohort1_vals, "Cohort 1 Lower 95% CI (%)", "Cohort 1 Upper 95% CI (%)"), fmt="none", ecolor="black", elinewidth=error_bar_linewidth, capsize=error_bar_capsize, zorder=4)
             ax.errorbar(group_centers + pair_offset, cohort2_vals, yerr=asymmetric_errors(cohort2_vals, "Cohort 2 Lower 95% CI (%)", "Cohort 2 Upper 95% CI (%)"), fmt="none", ecolor="black", elinewidth=error_bar_linewidth, capsize=error_bar_capsize, zorder=4)
         ax.set_xticks(group_centers)
-        ax.set_xticklabels(outcomes, fontsize=font_size, fontweight="bold", rotation=15, ha="right", fontname=font_family)
-        ax.set_ylabel("Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family)
-        ax.set_xlabel("Outcome", fontsize=font_size + 2, fontname=font_family)
-        ax.set_ylim([0, max(0.001, max_ci_val * 1.32)])
+        ax.set_xticklabels(display_outcomes, fontsize=font_size, fontweight="bold", rotation=vertical_tick_rotation, ha="right" if vertical_tick_rotation else "center", fontname=font_family)
+        ax.set_ylabel(y_axis_label or "Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family, labelpad=max(8, font_size // 2))
+        ax.set_xlabel(x_axis_label or "Outcome", fontsize=font_size + 2, fontname=font_family, labelpad=max(10, font_size // 2))
+        axis_pad_multiplier = 1.45 if (show_values and auto_avoid_text_collisions) else 1.32
+        ax.set_ylim([0, max(0.001, max_ci_val * axis_pad_multiplier)])
         if show_values:
             # Place labels above the upper CI cap rather than above the bar height.
-            # This prevents value labels from colliding with error bars.
-            offset = max(0.00001, max_ci_val * 0.035)
-            for i, rect in enumerate(bars1):
-                height = rect.get_height()
-                if height > 0:
-                    anchor = upper_anchor("Cohort 1 Upper 95% CI (%)", i, height)
-                    ax.text(
-                        rect.get_x() + rect.get_width() / 2.,
-                        anchor + offset,
-                        value_fmt.format(height),
-                        ha="center",
-                        va="bottom",
-                        fontsize=max(6, font_size - 1),
-                        fontweight="medium",
-                        fontname=font_family,
-                    )
-            for i, rect in enumerate(bars2):
-                height = rect.get_height()
-                if height > 0:
-                    anchor = upper_anchor("Cohort 2 Upper 95% CI (%)", i, height)
-                    ax.text(
-                        rect.get_x() + rect.get_width() / 2.,
-                        anchor + offset,
-                        value_fmt.format(height),
-                        ha="center",
-                        va="bottom",
-                        fontsize=max(6, font_size - 1),
-                        fontweight="medium",
-                        fontname=font_family,
-                    )
+            # Within each outcome group, stagger labels when their anchors are close.
+            offset = max(0.00001, max_ci_val * 0.04)
+            min_vertical_gap = max(0.00001, max_ci_val * 0.075) if auto_avoid_text_collisions else 0
+            for i, (rect1, rect2) in enumerate(zip(bars1, bars2)):
+                h1 = rect1.get_height()
+                h2 = rect2.get_height()
+                y1 = upper_anchor("Cohort 1 Upper 95% CI (%)", i, h1) + offset
+                y2 = upper_anchor("Cohort 2 Upper 95% CI (%)", i, h2) + offset
+                if auto_avoid_text_collisions and h1 > 0 and h2 > 0 and abs(y1 - y2) < min_vertical_gap:
+                    if y1 <= y2:
+                        y2 = y1 + min_vertical_gap
+                    else:
+                        y1 = y2 + min_vertical_gap
+                if h1 > 0:
+                    ax.text(rect1.get_x() + rect1.get_width() / 2., y1, value_fmt.format(h1), ha="center", va="bottom", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
+                if h2 > 0:
+                    ax.text(rect2.get_x() + rect2.get_width() / 2., y2, value_fmt.format(h2), ha="center", va="bottom", fontsize=max(6, font_size - 1), fontweight="medium", fontname=font_family, clip_on=False)
         if gridlines:
             ax.yaxis.grid(True, color="#DDDDDD", zorder=0)
         ax.xaxis.set_tick_params(labelsize=tick_fontsize, length=major_tick_length)
@@ -609,14 +638,15 @@ def plot_2cohort_outcomes(
             ax.errorbar(cohort1_vals, group_centers - pair_offset, xerr=asymmetric_errors(cohort1_vals, "Cohort 1 Lower 95% CI (%)", "Cohort 1 Upper 95% CI (%)"), fmt="none", ecolor="black", elinewidth=error_bar_linewidth, capsize=error_bar_capsize, zorder=4)
             ax.errorbar(cohort2_vals, group_centers + pair_offset, xerr=asymmetric_errors(cohort2_vals, "Cohort 2 Lower 95% CI (%)", "Cohort 2 Upper 95% CI (%)"), fmt="none", ecolor="black", elinewidth=error_bar_linewidth, capsize=error_bar_capsize, zorder=4)
         ax.set_yticks(group_centers)
-        ax.set_yticklabels(outcomes, fontsize=font_size, fontweight="bold", fontname=font_family)
-        ax.set_xlabel("Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family)
-        ax.set_ylabel("Outcome", fontsize=font_size + 2, fontname=font_family)
-        ax.set_xlim([0, max(0.001, max_ci_val * 1.32)])
+        ax.set_yticklabels(display_outcomes, fontsize=font_size, fontweight="bold", fontname=font_family)
+        ax.set_xlabel(x_axis_label or "Risk (%)", fontsize=font_size + 3, fontweight="bold", fontname=font_family, labelpad=max(8, font_size // 2))
+        ax.set_ylabel(y_axis_label or "Outcome", fontsize=font_size + 2, fontname=font_family, labelpad=max(10, font_size // 2))
+        axis_pad_multiplier = 1.55 if (show_values and auto_avoid_text_collisions) else 1.32
+        ax.set_xlim([0, max(0.001, max_ci_val * axis_pad_multiplier)])
         if show_values:
             # Place labels to the right of the upper CI cap rather than the bar end.
             # This prevents value labels from colliding with horizontal error bars.
-            offset = max(0.00001, max_ci_val * 0.035)
+            offset = max(0.00001, max_ci_val * 0.045)
             for i, rect in enumerate(bars1):
                 width_val = rect.get_width()
                 if width_val > 0:
@@ -630,6 +660,7 @@ def plot_2cohort_outcomes(
                         fontsize=max(6, font_size - 1),
                         fontweight="medium",
                         fontname=font_family,
+                        clip_on=False,
                     )
             for i, rect in enumerate(bars2):
                 width_val = rect.get_width()
@@ -644,6 +675,7 @@ def plot_2cohort_outcomes(
                         fontsize=max(6, font_size - 1),
                         fontweight="medium",
                         fontname=font_family,
+                        clip_on=False,
                     )
         if gridlines:
             ax.xaxis.grid(True, color="#DDDDDD", zorder=0)
@@ -658,7 +690,20 @@ def plot_2cohort_outcomes(
 
     for spine in ["top", "right", "left", "bottom"]:
         ax.spines[spine].set_visible(False)
-    plt.tight_layout(rect=[0, 0, 0.89 if show_legend else 1, 1])
+    # Conservative spacing to reduce collisions among long tick labels, axis titles, legends, and annotations.
+    if auto_avoid_text_collisions:
+        if orientation == "Horizontal":
+            longest = max([len(str(x)) for x in outcomes] or [0])
+            left_margin = min(0.48, max(0.22, 0.10 + 0.010 * longest))
+            right_margin = 0.76 if show_legend else 0.94
+            fig.subplots_adjust(left=left_margin, right=right_margin, top=0.94, bottom=0.16)
+        else:
+            longest = max([len(str(x)) for x in outcomes] or [0])
+            bottom_margin = min(0.48, max(0.22, 0.08 + 0.012 * longest))
+            right_margin = 0.76 if show_legend else 0.94
+            fig.subplots_adjust(left=0.14, right=right_margin, top=0.92, bottom=bottom_margin)
+    else:
+        plt.tight_layout(rect=[0, 0, 0.89 if show_legend else 1, 1], pad=1.2)
     return fig
 
 
@@ -684,12 +729,20 @@ fig = plot_2cohort_outcomes(
     error_bar_capsize=error_bar_capsize,
     error_bar_linewidth=error_bar_linewidth,
     value_decimals=value_decimals,
+    figure_width_inches=figure_width_inches,
+    figure_height_inches=figure_height_inches,
+    x_axis_label=x_axis_label,
+    y_axis_label=y_axis_label,
+    auto_avoid_text_collisions=auto_avoid_text_collisions,
+    wrap_outcome_labels=wrap_outcome_labels,
+    max_label_chars=max_label_chars,
+    vertical_tick_rotation=vertical_tick_rotation,
 )
 
-st.pyplot(fig)
+st.pyplot(fig, use_container_width=False)
 
 png_buf = BytesIO()
-fig.savefig(png_buf, format="png", dpi=300, bbox_inches="tight")
+fig.savefig(png_buf, format="png", dpi=export_dpi, bbox_inches="tight")
 st.download_button("📥 Download Chart as PNG", data=png_buf.getvalue(), file_name="2Cohort_Bargraph.png", mime="image/png")
 
 csv_buf = st.session_state.data.to_csv(index=False).encode("utf-8")
