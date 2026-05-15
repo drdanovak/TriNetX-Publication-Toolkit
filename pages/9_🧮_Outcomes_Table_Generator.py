@@ -799,14 +799,14 @@ with st.sidebar:
     table_title = st.text_area(
         "Table title",
         value=(
-            "Table 2: Outcomes for Statins for the Primary Analysis of Alzheimer’s Disease, "
-            "Related Outcomes, and All-Cause Mortality by statin group versus control"
+            "Table 2: Outcomes..., "
+            "Table 2 Title"
         ),
         height=110,
     )
     default_section = st.text_input(
         "Default section heading",
-        value="Main Analysis: All Statins Versus Control",
+        value="Main Analysis",
     )
 
     st.subheader("Number Formatting")
